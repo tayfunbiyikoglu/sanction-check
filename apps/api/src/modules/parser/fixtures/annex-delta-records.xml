@@ -1,0 +1,46 @@
+<legalAct celex="32026R1001" lang="en">
+  <annex id="I" heading="Annex I" expected-record-count="5">
+    <section action="ADD" record-type="PERSON">
+      <row id="1" evidence="Jane Example; date of birth: 1 January 1980; listed for supporting prohibited activities.">
+        <cell name="name">Jane Example</cell>
+        <cell name="dateOfBirth">1 January 1980</cell>
+        <cell name="grounds">Listed for supporting prohibited activities.</cell>
+      </row>
+    </section>
+    <section action="ADD" record-type="ENTITY">
+      <row id="2" evidence="Example Trading LLC; registration number: 12345; listed for material support.">
+        <cell name="name">Example Trading LLC</cell>
+        <cell name="registrationNumber">12345</cell>
+        <cell name="grounds">Listed for material support.</cell>
+      </row>
+    </section>
+    <section action="AMEND" record-type="PERSON">
+      <row id="3" evidence="The entry for Alex Changed is amended by replacing the address field.">
+        <cell name="name">Alex Changed</cell>
+        <cell name="amendmentText">Address replaced with 10 Sample Street.</cell>
+      </row>
+    </section>
+    <section action="REMOVE" record-type="PERSON">
+      <row id="4" evidence="The entry for Sam Sparse is deleted.">
+        <cell name="name">Sam Sparse</cell>
+      </row>
+    </section>
+    <section action="REPLACE" record-type="ENTITY">
+      <row id="5" evidence="The entry for Full Snapshot Bank is replaced by the following full entry.">
+        <cell name="name">Full Snapshot Bank</cell>
+        <cell name="registrationNumber">BANK-777</cell>
+        <cell name="address">1 Replacement Avenue</cell>
+        <cell name="grounds">Full replacement snapshot grounds.</cell>
+      </row>
+    </section>
+  </annex>
+  <annex id="II" heading="Annex II" expected-record-count="1">
+    <section action="ADD" record-type="PERSON">
+      <row id="1" evidence="Jane Example; date of birth: 2 February 1982; separate listed entry.">
+        <cell name="name">Jane Example</cell>
+        <cell name="dateOfBirth">2 February 1982</cell>
+        <cell name="grounds">Separate listed entry with a duplicate-looking name.</cell>
+      </row>
+    </section>
+  </annex>
+</legalAct>

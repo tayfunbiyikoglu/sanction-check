@@ -1,0 +1,32 @@
+{
+  "name": "@sanctions/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "db:migrate": "tsx src/scripts/db-migrate.ts",
+    "db:seed": "tsx src/scripts/db-seed.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "smoke:eurlex-search": "tsx src/scripts/smoke-eurlex-search.ts",
+    "smoke:cellar-retrieval": "tsx src/scripts/smoke-cellar-retrieval.ts",
+    "smoke:rss-feed": "tsx src/scripts/smoke-rss-feed.ts"
+  },
+  "dependencies": {
+    "@fastify/cors": "^10.0.0",
+    "@sanctions/domain": "file:../../packages/domain",
+    "fastify": "^5.1.0",
+    "pg": "^8.13.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/pg": "^8.11.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  }
+}

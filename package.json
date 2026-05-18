@@ -1,0 +1,27 @@
+{
+  "name": "sanctions-delta-detection",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace @sanctions/api",
+    "dev:api": "npm run dev --workspace @sanctions/api",
+    "dev:web": "npm run dev --workspace @sanctions/web",
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "smoke:eurlex-search": "npm run smoke:eurlex-search --workspace @sanctions/api",
+    "smoke:cellar-retrieval": "npm run smoke:cellar-retrieval --workspace @sanctions/api",
+    "smoke:rss-feed": "npm run smoke:rss-feed --workspace @sanctions/api"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  }
+}
