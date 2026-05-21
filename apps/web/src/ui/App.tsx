@@ -33,6 +33,7 @@ type QueueFilter = "ALL" | CandidateStatus;
 type SourceView = "official" | "metadata";
 type LiveActionKind = "rss" | "retrieve" | "classify" | "ai-extract" | null;
 type Theme = "light" | "dark";
+type ReviewDecision = "good" | "flagged" | "skipped";
 interface EvidenceJumpRequest {
   recordId: string;
   requestedAt: number;
@@ -426,7 +427,7 @@ export function App() {
           </span>
           <div>
             <p className="eyebrow">Evidence Workbench</p>
-            <h1>Candidate Legal Act operations</h1>
+            <h1>Candidate Workbench</h1>
           </div>
         </div>
         <nav aria-label="Primary">
@@ -690,13 +691,13 @@ export function App() {
           <div className="sectionHeader">
             <div>
               <h2>Extraction Correction</h2>
-              <p>Source-backed correction state for the selected Candidate Legal Act</p>
+              <p>Manual correction actions recorded for the selected Candidate Legal Act</p>
             </div>
             <span className="countBadge">{candidateDetail?.correctionActions.length ?? 0}</span>
           </div>
           <div className="supportBody">
-            <ExtractionPanel
-              extraction={selectedExtraction}
+            <CorrectionHistory
+              candidate={candidateDetail?.candidate ?? selectedCandidate}
               correctionActions={candidateDetail?.correctionActions ?? []}
               gate={completeExtractionGate}
             />
@@ -946,9 +947,13 @@ function RecordTable({
 }) {
   const [selectedRecordId, setSelectedRecordId] = useState<string | null>(records[0]?.id ?? null);
   const [expandedEvidenceRecordId, setExpandedEvidenceRecordId] = useState<string | null>(null);
+  const [reviewMode, setReviewMode] = useState(false);
+  const [reviewDecisions, setReviewDecisions] = useState<Record<string, ReviewDecision>>({});
   const selectedRecord = records.find((record) => record.id === selectedRecordId) ?? records[0] ?? null;
+  const selectedRecordIndex = selectedRecord ? records.findIndex((record) => record.id === selectedRecord.id) : -1;
   const isEvidenceExpanded = selectedRecord ? expandedEvidenceRecordId === selectedRecord.id : false;
   const shouldCollapseEvidence = Boolean(selectedRecord && selectedRecord.evidenceText.length > 180);
+  const reviewCounts = getReviewCounts(records, reviewDecisions);
 
   useEffect(() => {
     if (!selectedRecordId || !records.some((record) => record.id === selectedRecordId)) {
@@ -957,14 +962,187 @@ function RecordTable({
     }
   }, [records, selectedRecordId]);
 
+  useEffect(() => {
+    if (records.length === 0) {
+      setReviewMode(false);
+    }
+  }, [records.length]);
+
+  useEffect(() => {
+    if (!reviewMode) {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        moveSelectedRecord(1);
+      } else if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        moveSelectedRecord(-1);
+      } else if (event.key.toLowerCase() === "g") {
+        event.preventDefault();
+        markSelectedRecord("good", true);
+      } else if (event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        markSelectedRecord("flagged", true);
+      } else if (event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        markSelectedRecord("skipped", true);
+      } else if (event.key.toLowerCase() === "e" && selectedRecord) {
+        event.preventDefault();
+        onJumpToEvidence(selectedRecord.id);
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        setReviewMode(false);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [reviewMode, selectedRecord, selectedRecordIndex, records]);
+
+  function moveSelectedRecord(direction: 1 | -1) {
+    if (records.length === 0) {
+      return;
+    }
+
+    const nextIndex = Math.max(0, Math.min(records.length - 1, selectedRecordIndex + direction));
+    setSelectedRecordId(records[nextIndex]?.id ?? null);
+    setExpandedEvidenceRecordId(null);
+  }
+
+  function markSelectedRecord(decision: ReviewDecision, advance = false) {
+    if (!selectedRecord) {
+      return;
+    }
+
+    setReviewDecisions((current) => ({
+      ...current,
+      [selectedRecord.id]: decision
+    }));
+
+    if (advance && selectedRecordIndex < records.length - 1) {
+      setSelectedRecordId(records[selectedRecordIndex + 1]?.id ?? null);
+      setExpandedEvidenceRecordId(null);
+    }
+  }
+
   if (records.length === 0) {
     return <p className="recordEmpty">No Sanctions Delta Records extracted for this Candidate Legal Act.</p>;
   }
 
+  if (reviewMode && selectedRecord) {
+    const selectedDecision = reviewDecisions[selectedRecord.id];
+
+    return (
+      <div className="nameReviewMode">
+        <div className="reviewToolbar">
+          <div>
+            <strong>Name review</strong>
+            <span>
+              {reviewCounts.reviewed} of {records.length} reviewed · {reviewCounts.flagged} flagged ·{" "}
+              {reviewCounts.skipped} skipped
+            </span>
+          </div>
+          <button onClick={() => setReviewMode(false)}>Exit review</button>
+        </div>
+
+        <div className="reviewProgress" aria-hidden="true">
+          <span style={{ width: `${Math.round((reviewCounts.reviewed / records.length) * 100)}%` }} />
+        </div>
+
+        <div className="reviewCard">
+          <div className="reviewCardHeader">
+            <div>
+              <p>
+                Record {selectedRecordIndex + 1} of {records.length}
+              </p>
+              <h3>{selectedRecord.primaryName}</h3>
+            </div>
+            <ReviewDecisionBadge decision={selectedDecision} />
+          </div>
+
+          <div className="reviewChips">
+            <span className="recordType">{selectedRecord.recordType}</span>
+            <span className={`deltaAction ${selectedRecord.actionType.toLowerCase()}`}>
+              {formatDeltaAction(selectedRecord.actionType)}
+            </span>
+            <span>{selectedRecord.affectedAnnex ?? "Annex unknown"}</span>
+            <span>{Math.round(selectedRecord.confidence * 100)}% confidence</span>
+          </div>
+
+          <dl className="recordFacts reviewFacts">
+            <div>
+              <dt>Source order</dt>
+              <dd>{selectedRecord.sourceOrder}</dd>
+            </div>
+            <div>
+              <dt>Source location</dt>
+              <dd>{selectedRecord.sourceLocation ?? "Not identified"}</dd>
+            </div>
+          </dl>
+
+          <div className="evidenceBlock reviewEvidence">
+            <div className="evidenceBlockHeader">
+              <strong>Evidence text</strong>
+              <button onClick={() => onJumpToEvidence(selectedRecord.id)}>Jump to evidence</button>
+            </div>
+            <p>{selectedRecord.evidenceText}</p>
+          </div>
+
+          <div className="reviewActions">
+            <button
+              className={selectedDecision === "good" ? "selected good" : "good"}
+              onClick={() => markSelectedRecord("good", true)}
+            >
+              Looks good
+            </button>
+            <button
+              className={selectedDecision === "flagged" ? "selected flagged" : "flagged"}
+              onClick={() => markSelectedRecord("flagged", true)}
+            >
+              Needs correction
+            </button>
+            <button
+              className={selectedDecision === "skipped" ? "selected skipped" : "skipped"}
+              onClick={() => markSelectedRecord("skipped", true)}
+            >
+              Skip
+            </button>
+          </div>
+
+          <div className="reviewFooter">
+            <button disabled={selectedRecordIndex <= 0} onClick={() => moveSelectedRecord(-1)}>
+              Previous
+            </button>
+            <span>Shortcuts: ←/→ · G good · F flag · S skip · E evidence · Esc exit</span>
+            <button disabled={selectedRecordIndex >= records.length - 1} onClick={() => moveSelectedRecord(1)}>
+              Next
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="recordReview">
-      <div className="recordList" aria-label="Extracted Sanctions Delta Records">
-        {records.map((record) => (
+    <>
+      <div className="recordReviewToolbar">
+        <div>
+          <strong>{reviewCounts.reviewed} reviewed</strong>
+          <span>{reviewCounts.flagged} flagged</span>
+        </div>
+        <button onClick={() => setReviewMode(true)}>Review names</button>
+      </div>
+      <div className="recordReview">
+        <div className="recordList" aria-label="Extracted Sanctions Delta Records">
+          {records.map((record) => (
           <button
             className={`recordListItem ${record.id === selectedRecord?.id ? "selected" : ""}`}
             key={record.id}
@@ -977,15 +1155,16 @@ function RecordTable({
                 {record.affectedAnnex ?? "Annex unknown"} · {record.recordType}
               </small>
             </span>
+            <ReviewDecisionMarker decision={reviewDecisions[record.id]} />
             <span className={`deltaAction ${record.actionType.toLowerCase()}`}>
               {formatDeltaAction(record.actionType)}
             </span>
           </button>
-        ))}
-      </div>
+          ))}
+        </div>
 
-      <div className="recordDetail" aria-label="Selected Sanctions Delta Record">
-        {selectedRecord ? (
+        <div className="recordDetail" aria-label="Selected Sanctions Delta Record">
+          {selectedRecord ? (
           <>
             <div className="recordDetailHeader">
               <div>
@@ -1033,10 +1212,35 @@ function RecordTable({
               </p>
             </div>
           </>
-        ) : null}
+          ) : null}
+        </div>
       </div>
-    </div>
+    </>
   );
+}
+
+function ReviewDecisionMarker({ decision }: { decision: ReviewDecision | undefined }) {
+  return <span className={`reviewMarker ${decision ?? "unreviewed"}`} aria-label={decision ?? "unreviewed"} />;
+}
+
+function ReviewDecisionBadge({ decision }: { decision: ReviewDecision | undefined }) {
+  if (!decision) {
+    return <span className="reviewDecisionBadge unreviewed">Unreviewed</span>;
+  }
+
+  const label = decision === "good" ? "Looks good" : decision === "flagged" ? "Needs correction" : "Skipped";
+  return <span className={`reviewDecisionBadge ${decision}`}>{label}</span>;
+}
+
+function getReviewCounts(records: SanctionsDeltaRecord[], decisions: Record<string, ReviewDecision>) {
+  const values = records.map((record) => decisions[record.id]).filter(Boolean) as ReviewDecision[];
+
+  return {
+    reviewed: values.length,
+    good: values.filter((decision) => decision === "good").length,
+    flagged: values.filter((decision) => decision === "flagged").length,
+    skipped: values.filter((decision) => decision === "skipped").length
+  };
 }
 
 function ExtractionPanel({
@@ -1089,6 +1293,53 @@ function ExtractionPanel({
         <span>Extraction Correction</span>
         <strong>{correctionActions.length}</strong>
       </div>
+    </div>
+  );
+}
+
+function CorrectionHistory({
+  candidate,
+  correctionActions,
+  gate
+}: {
+  candidate: CandidateLegalAct | null;
+  correctionActions: ExtractionCorrectionAction[];
+  gate: CompleteExtractionGateResult | null;
+}) {
+  if (correctionActions.length === 0) {
+    return (
+      <div className="correctionEmpty">
+        <div>
+          <h3>No correction actions recorded</h3>
+          <p>
+            {candidate?.status === "EXPORTED"
+              ? "This legal act is already exported and no manual extraction corrections were recorded for it."
+              : gate?.ready
+                ? "The extracted records currently pass the complete-extraction gate without manual corrections."
+                : "If extraction issues are found, correction actions will appear here."}
+          </p>
+        </div>
+        <span className={`status ${gate?.ready ? "extracted_complete" : "needs_extraction_correction"}`}>
+          {gate?.ready ? "No correction needed" : "Correction may be needed"}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="correctionList">
+      {correctionActions.map((action) => (
+        <div className="correctionItem" key={action.id}>
+          <div>
+            <strong>{formatStatus(action.actionType)}</strong>
+            <span>{formatDateTime(action.occurredAt)}</span>
+          </div>
+          <p>{action.comment ?? action.evidenceText}</p>
+          <small>
+            {action.actor} · {action.sourceLocation}
+          </small>
+        </div>
+      ))}
     </div>
   );
 }
@@ -1367,8 +1618,11 @@ export function getExportReadiness({
 
   if (exportBatches.length > 0 || candidate.status === "EXPORTED") {
     return {
-      label: "Export Batch exists",
-      reason: "The latest Complete Extraction already has an immutable Export Batch.",
+      label: "Already exported",
+      reason:
+        exportBatches.length > 0
+          ? "This Candidate Legal Act already has an immutable Export Batch."
+          : "This Candidate Legal Act is marked as exported, so a new Export Batch is disabled unless re-export is required.",
       canCreateExportBatch: false,
       requiresReexport: false
     };

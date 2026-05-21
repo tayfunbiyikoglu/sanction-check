@@ -48,32 +48,16 @@ export interface RecordDownloadInput {
 }
 
 const csvColumns = [
-  "export_batch_id",
-  "candidate_id",
-  "legal_act_identity_kind",
-  "legal_act_identity_value",
-  "celex_id",
-  "cellar_id",
-  "official_uri",
-  "title",
-  "publication_date",
-  "working_language",
-  "source_content_hash",
-  "source_content_reference",
-  "source_uri",
-  "source_content_type",
-  "parser_version",
-  "record_id",
-  "source_order",
-  "source_location",
-  "affected_annex",
-  "detected_base_act",
-  "record_type",
-  "action_type",
-  "primary_name",
-  "listed_entry_json",
-  "evidence_text",
-  "confidence"
+  "COUNTRYOFORIGIN",
+  "ENTRYDATE",
+  "FIRSTNAME",
+  "GENDER",
+  "ID",
+  "ISDELETED",
+  "JUSTIFICATION",
+  "LEGALSTATUS",
+  "NAME",
+  "YEAR"
 ] as const;
 
 export function createExportBatch(input: CreateExportBatchInput): CreateExportBatchResult {
@@ -138,40 +122,29 @@ export function createExportBatch(input: CreateExportBatchInput): CreateExportBa
 }
 
 export function serializeAuditCsv(input: {
-  batch: Pick<ExportBatch, "id">;
+  batch: Pick<ExportBatch, "id"> & Partial<Pick<ExportBatch, "createdAt">>;
   candidate: CandidateLegalAct;
   extractionResult: ExtractionResult;
   records: SanctionsDeltaRecord[];
 }): string {
-  const identity = resolveLegalActIdentity(input.candidate);
-  const rows = orderRecordsForExport(input.records).map((record) => [
-    input.batch.id,
-    input.candidate.id,
-    identity.kind,
-    identity.value,
-    input.candidate.celexId ?? "",
-    input.candidate.cellarId ?? "",
-    input.candidate.officialUri ?? "",
-    input.candidate.title,
-    input.candidate.publicationDate ?? "",
-    input.candidate.workingLanguage,
-    input.candidate.sourceContent?.contentHash ?? "",
-    input.candidate.sourceContent?.reference ?? "",
-    input.candidate.sourceContent?.sourceUri ?? "",
-    input.candidate.sourceContent?.contentType ?? "",
-    input.extractionResult.parserVersion,
-    record.id,
-    String(record.sourceOrder),
-    record.sourceLocation ?? "",
-    record.affectedAnnex ?? "",
-    record.detectedBaseAct ?? "",
-    record.recordType,
-    record.actionType,
-    record.primaryName,
-    stableStringify(record.listedEntry ?? {}),
-    record.evidenceText,
-    String(record.confidence)
-  ]);
+  const exportDate = formatCompactDate(input.batch.createdAt ?? input.candidate.publicationDate);
+  const rows = orderRecordsForExport(input.records).map((record, index) => {
+    const nameParts = splitExportName(record);
+    const legalStatus = record.recordType === "ENTITY" ? "LEGAL_ENTITY" : "NATURAL_PERSON";
+
+    return [
+      "",
+      formatEntryDate(readListedEntryField(record, "dateoflisting") ?? input.candidate.publicationDate),
+      nameParts.firstName,
+      inferGender(record),
+      `${exportDate}${String(index + 1).padStart(4, "0")}`,
+      "FALSE",
+      "",
+      legalStatus,
+      nameParts.name,
+      ""
+    ];
+  });
 
   return [csvColumns.join(","), ...rows.map((row) => row.map(csvEscape).join(","))].join("\n") + "\n";
 }
@@ -297,6 +270,119 @@ function buildFileName(candidate: CandidateLegalAct, createdAt: string, kind: "e
   const identity = resolveLegalActIdentity(candidate);
   const timestamp = createdAt.replace(/[^0-9]/g, "").slice(0, 14);
   return `${identity.value.toLowerCase()}-${kind}-${timestamp}.csv`;
+}
+
+function splitExportName(record: SanctionsDeltaRecord): { firstName: string; name: string } {
+  const displayName = firstLine(readListedEntryField(record, "name") ?? record.primaryName).trim();
+
+  if (record.recordType === "ENTITY") {
+    return { firstName: "", name: displayName };
+  }
+
+  const parts = displayName.split(/\s+/).filter(Boolean);
+  if (parts.length <= 1) {
+    return { firstName: "", name: displayName.toUpperCase() };
+  }
+
+  const surname = parts.at(-1) ?? "";
+  return {
+    firstName: parts.slice(0, -1).join(" "),
+    name: surname.toUpperCase()
+  };
+}
+
+function inferGender(record: SanctionsDeltaRecord): "MALE" | "FEMALE" | "NONE" {
+  if (record.recordType === "ENTITY") {
+    return "NONE";
+  }
+
+  const explicitGender = readListedEntryField(record, "gender")?.toLowerCase();
+  if (explicitGender) {
+    if (/\bfemale\b|\bwoman\b|\bwomen\b/.test(explicitGender)) {
+      return "FEMALE";
+    }
+
+    if (/\bmale\b|\bman\b|\bmen\b/.test(explicitGender)) {
+      return "MALE";
+    }
+  }
+
+  const firstName = splitExportName(record).firstName.split(/\s+/)[0]?.toLowerCase() ?? "";
+  const femaleFirstNames = new Set([
+    "anastasia",
+    "evgeniya",
+    "irina",
+    "lilya",
+    "marina",
+    "mariya",
+    "natalya",
+    "olga",
+    "svetlana",
+    "tatyana",
+    "yulia"
+  ]);
+
+  if (femaleFirstNames.has(firstName) || /(?:a|aya|iya|ina|ovna|evna)$/.test(firstName)) {
+    return "FEMALE";
+  }
+
+  return "MALE";
+}
+
+function readListedEntryField(record: SanctionsDeltaRecord, fieldName: string): string | undefined {
+  const value = record.listedEntry?.[fieldName];
+
+  if (Array.isArray(value)) {
+    return value.join("; ");
+  }
+
+  return value;
+}
+
+function formatEntryDate(value: string | undefined): string {
+  const date = parseDateParts(value);
+
+  if (!date) {
+    return "";
+  }
+
+  return `${date.year}-${date.month}-${date.day}`;
+}
+
+function formatCompactDate(value: string | undefined): string {
+  const date = parseDateParts(value);
+
+  if (!date) {
+    return new Date().toISOString().slice(0, 10).replaceAll("-", "");
+  }
+
+  return `${date.year}${date.month}${date.day}`;
+}
+
+function parseDateParts(value: string | undefined): { year: string; month: string; day: string } | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const isoMatch = value.match(/(?:^|\D)(\d{4})-(\d{2})-(\d{2})(?:\D|$)/);
+  if (isoMatch) {
+    return { year: isoMatch[1] ?? "", month: isoMatch[2] ?? "", day: isoMatch[3] ?? "" };
+  }
+
+  const dottedMatch = value.match(/\b(\d{1,2})[./](\d{1,2})[./](\d{4})\b/);
+  if (dottedMatch) {
+    return {
+      year: dottedMatch[3] ?? "",
+      month: (dottedMatch[2] ?? "").padStart(2, "0"),
+      day: (dottedMatch[1] ?? "").padStart(2, "0")
+    };
+  }
+
+  return undefined;
+}
+
+function firstLine(value: string): string {
+  return value.split(/\r?\n/)[0]?.trim() ?? "";
 }
 
 function sha256Hex(value: string): string {

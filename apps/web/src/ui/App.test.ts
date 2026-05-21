@@ -103,7 +103,7 @@ describe("Evidence Workbench workflow helpers", () => {
     });
 
     expect(readiness.canCreateExportBatch).toBe(false);
-    expect(readiness.label).toBe("Export Batch exists");
+    expect(readiness.label).toBe("Already exported");
   });
 
   it("surfaces Re-Export only after the current Complete Extraction differs", () => {

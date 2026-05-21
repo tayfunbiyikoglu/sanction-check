@@ -1,29 +1,30 @@
 # CSV Export Specification
 
-MVP CSV export is an audit-friendly intermediate format. It preserves extracted fields, source metadata, and evidence text; it is not yet the final bank PTM upload schema.
+MVP CSV export uses the sanctions upload schema expected by downstream review tooling. Audit metadata is retained in export batch records, source records, hashes, and download events rather than in the CSV columns.
 
 ## Export Rule
 Export happens per candidate legal act. Once extraction is complete, all sanctions delta records for that candidate legal act are exported together as one audit CSV batch.
 
 Partial export is not allowed in MVP. If extraction is incomplete or uncertain, the candidate legal act waits for extraction correction before export.
 
-## Suggested CSV Columns
+## CSV Columns
 
 ```csv
-record_type,action_type,primary_name,aliases,date_of_birth,place_of_birth,nationality,identifiers,address,function_or_role,grounds,affected_annex,detected_base_act,source_order,source_location,source_celex_id,source_publication_date,source_title,source_url,evidence_text,export_batch_id
+COUNTRYOFORIGIN,ENTRYDATE,FIRSTNAME,GENDER,ID,ISDELETED,JUSTIFICATION,LEGALSTATUS,NAME,YEAR
 ```
 
 ## Column Notes
 
-- `record_type`: PERSON / ENTITY
-- `action_type`: ADD / AMEND / REMOVE / REPLACE
-- `aliases`: pipe-separated or JSON string depending on target system need
-- `identifiers`: pipe-separated or JSON string depending on target system need
-- `evidence_text`: included in MVP audit exports
-- `affected_annex`: Annex heading or identifier when available
-- `detected_base_act`: detected configured base act or regime reference when available
-- `source_order`: order in which the listed-entry change appears in the candidate legal act
-- `source_location`: source row, section, or fragment location when available
+- `COUNTRYOFORIGIN`: emitted as an empty column when the source does not provide a mapped value.
+- `ENTRYDATE`: listing date from the extracted record when present, otherwise source publication date, formatted as `YYYY-MM-DD`.
+- `FIRSTNAME`: for natural persons, all personal-name tokens before the final surname token.
+- `GENDER`: `MALE` / `FEMALE` for natural persons, using source gender when available and a deterministic name heuristic otherwise; `NONE` for legal entities.
+- `ID`: generated per export row as `YYYYMMDD0001`, using the export batch creation date and a one-based row counter.
+- `ISDELETED`: always `FALSE`.
+- `JUSTIFICATION`: emitted as an empty column.
+- `LEGALSTATUS`: `NATURAL_PERSON` for person records and `LEGAL_ENTITY` for entity records.
+- `NAME`: surname in uppercase for natural persons; full entity name for legal entities.
+- `YEAR`: emitted as an empty column.
 
 ## File Naming
 

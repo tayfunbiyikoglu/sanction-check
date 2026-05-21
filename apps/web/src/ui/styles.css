@@ -1036,6 +1036,36 @@ td small {
   border-bottom: 1px solid var(--border-subtle);
 }
 
+.recordReviewToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-muted);
+}
+
+.recordReviewToolbar div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.recordReviewToolbar strong,
+.recordReviewToolbar span {
+  color: var(--text-muted);
+  font-size: 0.74rem;
+}
+
+.recordReviewToolbar button {
+  min-height: 30px;
+  color: var(--accent-strong);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
 .recordReview {
   display: grid;
   grid-template-columns: minmax(220px, 0.9fr) minmax(260px, 1.1fr);
@@ -1054,7 +1084,7 @@ td small {
 
 .recordListItem {
   display: grid;
-  grid-template-columns: 30px minmax(0, 1fr) auto;
+  grid-template-columns: 30px minmax(0, 1fr) 14px auto;
   align-items: center;
   gap: 8px;
   width: 100%;
@@ -1109,6 +1139,26 @@ td small {
   font-size: 0.7rem;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.reviewMarker {
+  display: inline-flex;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--border-strong);
+}
+
+.reviewMarker.good {
+  background: var(--success-strong);
+}
+
+.reviewMarker.flagged {
+  background: var(--warning-strong);
+}
+
+.reviewMarker.skipped {
+  background: var(--text-subtle);
 }
 
 .recordDetail {
@@ -1191,6 +1241,192 @@ td small {
   -webkit-line-clamp: 4;
 }
 
+.nameReviewMode {
+  min-height: 506px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-muted);
+}
+
+.reviewToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.reviewToolbar div {
+  display: grid;
+  gap: 4px;
+}
+
+.reviewToolbar strong {
+  color: var(--text-strong);
+  font-size: 0.9rem;
+}
+
+.reviewToolbar span {
+  color: var(--text-muted);
+  font-size: 0.74rem;
+}
+
+.reviewToolbar button {
+  min-height: 30px;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.reviewProgress {
+  height: 4px;
+  background: var(--surface-soft);
+}
+
+.reviewProgress span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--success-strong));
+  transition: width 180ms ease;
+}
+
+.reviewCard {
+  display: grid;
+  gap: 14px;
+  margin: 12px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.reviewCardHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.reviewCardHeader p {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.reviewCardHeader h3 {
+  margin-top: 6px;
+  color: var(--text-strong);
+  font-size: 1.34rem;
+  line-height: 1.18;
+}
+
+.reviewDecisionBadge {
+  display: inline-flex;
+  border-radius: 999px;
+  padding: 0.24rem 0.52rem;
+  font-size: 0.68rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.reviewDecisionBadge.unreviewed {
+  background: var(--chip-neutral-bg);
+  color: var(--chip-neutral-text);
+}
+
+.reviewDecisionBadge.good {
+  background: var(--success-bg);
+  color: var(--success-strong);
+}
+
+.reviewDecisionBadge.flagged {
+  background: var(--warning-bg);
+  color: var(--warning-strong);
+}
+
+.reviewDecisionBadge.skipped {
+  background: var(--chip-neutral-bg);
+  color: var(--text-muted);
+}
+
+.reviewChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.reviewChips > span:not(.recordType):not(.deltaAction) {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  padding: 0.22rem 0.5rem;
+}
+
+.reviewFacts {
+  margin-top: 0;
+}
+
+.reviewEvidence {
+  margin-top: 0;
+}
+
+.reviewActions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.reviewActions button {
+  min-height: 40px;
+  font-weight: 800;
+}
+
+.reviewActions .good {
+  color: var(--success-strong);
+}
+
+.reviewActions .flagged {
+  color: var(--warning-strong);
+}
+
+.reviewActions .skipped {
+  color: var(--text-muted);
+}
+
+.reviewActions .selected.good {
+  border-color: var(--success-strong);
+  background: var(--success-bg);
+}
+
+.reviewActions .selected.flagged {
+  border-color: var(--warning-strong);
+  background: var(--warning-bg);
+}
+
+.reviewActions .selected.skipped {
+  background: var(--chip-neutral-bg);
+}
+
+.reviewFooter {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 12px;
+}
+
+.reviewFooter span {
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  text-align: center;
+}
+
 .hashCell {
   font-family: "SFMono-Regular", Consolas, monospace;
 }
@@ -1245,6 +1481,60 @@ td small {
   border-top: 1px solid var(--border-subtle);
   color: var(--text-muted);
   font-size: 0.78rem;
+}
+
+.correctionEmpty {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+
+.correctionEmpty h3 {
+  font-size: 0.92rem;
+}
+
+.correctionEmpty p {
+  max-width: 680px;
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.correctionList {
+  display: grid;
+}
+
+.correctionItem {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.correctionItem div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.correctionItem strong {
+  color: var(--text-strong);
+  font-size: 0.84rem;
+}
+
+.correctionItem span,
+.correctionItem small,
+.correctionItem p {
+  color: var(--text-muted);
+  font-size: 0.76rem;
 }
 
 .readinessText {
