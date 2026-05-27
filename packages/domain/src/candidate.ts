@@ -87,25 +87,44 @@ export interface SanctionsDeltaRecord {
   confidence: number;
 }
 
-export type ExtractionCorrectionActionType = "FIELD_CORRECTION" | "MISSED_RECORD_ADDITION";
+export type RecordReviewDecision = "good" | "flagged" | "skipped";
+
+export interface SanctionsDeltaRecordReview {
+  candidateId: string;
+  recordId: string;
+  decision: RecordReviewDecision;
+  actor: string;
+  reviewedAt: string;
+  comment?: string;
+}
+
+export type ExtractionCorrectionActionType = "FIELD_CORRECTION" | "MISSED_RECORD_ADDITION" | "MARK_EXTRACTION_COMPLETE";
 
 export interface ExtractionCorrectionAction {
   id: string;
   candidateId: string;
-  recordId: string;
+  recordId?: string;
   actionType: ExtractionCorrectionActionType;
   actor: string;
   occurredAt: string;
   beforeValues: Record<string, unknown>;
   afterValues: Record<string, unknown>;
-  evidenceText: string;
-  sourceLocation: string;
+  evidenceText?: string;
+  sourceLocation?: string;
   comment?: string;
+}
+
+export interface CompleteExtractionGateCheck {
+  id: string;
+  label: string;
+  passed: boolean;
+  message: string;
 }
 
 export interface CompleteExtractionGateResult {
   ready: boolean;
   blockers: string[];
+  checks: CompleteExtractionGateCheck[];
 }
 
 export type CandidateClassification =

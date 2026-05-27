@@ -55,9 +55,11 @@ describe("export routes", () => {
       { exportBatchId: body.exportBatch.id, recordId: "delta-candidate-delta-001-annex-i-section-1-row-1" },
       { exportBatchId: body.exportBatch.id, recordId: "delta-candidate-delta-001-annex-i-section-2-row-2" }
     ]);
-    expect(csv).toContain("export_batch_id,candidate_id,legal_act_identity_kind");
-    expect(csv).toContain("evidence_text");
-    expect(csv.indexOf("Jane Example")).toBeLessThan(csv.indexOf("Example Entity Ltd"));
+    expect(csv).toContain("COUNTRYOFORIGIN,ENTRYDATE,FIRSTNAME,GENDER,ID,ISDELETED,JUSTIFICATION,LEGALSTATUS,NAME,YEAR");
+    expect(csv).toContain(",Jane,MALE,");
+    expect(csv).toContain("NATURAL_PERSON,EXAMPLE");
+    expect(csv).toContain("LEGAL_ENTITY,Example Entity Ltd");
+    expect(csv.indexOf("NATURAL_PERSON,EXAMPLE")).toBeLessThan(csv.indexOf("LEGAL_ENTITY,Example Entity Ltd"));
     expect(exportBatches).toHaveLength(1);
     expect(exportBatchRecords).toHaveLength(2);
     expect(exportBatchFiles[0]?.csv).toBe(csv);
@@ -140,7 +142,7 @@ describe("export routes", () => {
     expect(download.statusCode).toBe(200);
     expect(download.headers["content-type"]).toContain("text/csv");
     expect(download.body).toBe(originalCsv);
-    expect(download.body).toContain("Jane Example");
+    expect(download.body).toContain("NATURAL_PERSON,EXAMPLE");
     expect(download.body).not.toContain("Mutated after export");
     expect(exportDownloadEvents).toHaveLength(1);
     expect(exportDownloadEvents[0]).toMatchObject({

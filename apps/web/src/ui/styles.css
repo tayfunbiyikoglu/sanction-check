@@ -904,6 +904,18 @@ dd {
   text-align: center;
 }
 
+.sourceJumpMessage {
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--warning-strong);
+  border-radius: 6px;
+  background: var(--warning-bg);
+  color: var(--warning-strong);
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
 .sourceEmpty {
   margin: 12px;
   padding: 16px;
@@ -1412,6 +1424,12 @@ td small {
   background: var(--chip-neutral-bg);
 }
 
+.reviewError {
+  margin: 0;
+  color: var(--danger-strong);
+  font-size: 0.78rem;
+}
+
 .reviewFooter {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -1461,7 +1479,14 @@ td small {
 }
 
 .gateList li {
+  display: grid;
+  gap: 2px;
   margin: 6px 0;
+}
+
+.gateList strong {
+  color: var(--text);
+  font-size: 0.72rem;
 }
 
 .gateList .done {
@@ -1470,6 +1495,44 @@ td small {
 
 .gateList .blocked {
   color: var(--warning-strong);
+}
+
+.markCompleteBox {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.markCompleteBox label {
+  color: var(--text);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.markCompleteBox p {
+  margin: 0;
+  color: var(--warning-strong);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.markCompleteBox textarea {
+  width: 100%;
+  min-height: 68px;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.78rem;
+}
+
+.markCompleteBox button {
+  justify-self: start;
 }
 
 .correctionStrip {

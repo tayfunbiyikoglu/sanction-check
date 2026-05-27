@@ -76,6 +76,10 @@ _Avoid_: Failed candidate, multilingual fallback
 The extracted sanctions delta records fully represent the listed entries in the candidate legal act.
 _Avoid_: Partially approved, partially exported
 
+**AI-Assisted Extraction**:
+An extraction path that uses an AI provider to produce a Complete Extraction from official Source Content when the user chooses that workflow.
+_Avoid_: Unverified AI output, replacement for source-backed controls
+
 **Extraction Correction**:
 A human correction to make extracted records accurately represent the official Annex.
 _Avoid_: Approval, review decision, sanction approval
@@ -104,6 +108,10 @@ _Avoid_: Failed extraction, incomplete record
 A listed-entry change that preserves the shape of the legal act, either as changed text or a full revised entry.
 _Avoid_: Replacement entry, invented full snapshot
 
+**Evidence Workbench**:
+The analyst-facing workflow surface for RSS Feed Runs, Candidate Legal Act review, Source Content evidence navigation, AI-Assisted Extraction, Complete Extraction state, and Export Batch creation.
+_Avoid_: Admin dashboard, generic UI
+
 ## Relationships
 
 - A **Candidate Legal Act** may produce zero, one, or many **Sanctions Delta Records**.
@@ -111,6 +119,7 @@ _Avoid_: Replacement entry, invented full snapshot
 - A **Sanctions Delta Record** represents one **Listed Entry** when the source legal act contains actual sanctions-list changes.
 - An **Export Batch** contains all **Sanctions Delta Records** for exactly one **Candidate Legal Act**.
 - A **Candidate Legal Act** must have a **Complete Extraction** before it can produce an **Export Batch**.
+- A **Complete Extraction** may be produced by deterministic parsing or by **AI-Assisted Extraction**, but it must remain backed by official **Source Content** and **Evidence Text**.
 - A **Candidate Legal Act** may produce a **Re-Export**, but previous **Export Batches** remain immutable.
 - **Extraction Correction** resolves an incomplete or inaccurate extraction before export.
 - **Extraction Correction** may add a missing **Sanctions Delta Record** only when backed by **Evidence Text** from the **Source Content**, with **Delta Action** and person/entity classification inferred from the selected source context.

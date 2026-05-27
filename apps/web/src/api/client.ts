@@ -8,6 +8,7 @@ import type {
   ExtractionCorrectionAction,
   ExtractionResult,
   MonitorOverview,
+  SanctionsDeltaRecordReview,
   SanctionsDeltaRecord,
   WatchQuery
 } from "@sanctions/domain";
@@ -22,6 +23,7 @@ export interface CandidateDetailResponse {
   watchQueries: WatchQuery[];
   extractionResults: ExtractionResult[];
   sanctionsDeltaRecords: SanctionsDeltaRecord[];
+  recordReviews: SanctionsDeltaRecordReview[];
   correctionActions: ExtractionCorrectionAction[];
   exportBatches: ExportBatch[];
   reexportState: {
@@ -56,6 +58,17 @@ export interface CreateExportBatchResponse {
   exportBatch: ExportBatch;
   exportBatchRecords: ExportBatchRecord[];
   csv: string;
+}
+
+export interface MarkExtractionCompleteResponse {
+  candidate: CandidateLegalAct;
+  extractionResult: ExtractionResult;
+  correctionAction: ExtractionCorrectionAction;
+  completeExtractionGate: CompleteExtractionGateResult;
+}
+
+export interface SaveRecordReviewResponse {
+  recordReview: SanctionsDeltaRecordReview;
 }
 
 export interface RssRunResponse {
@@ -145,6 +158,52 @@ export async function createExportBatch(candidateId: string, reexportReason?: st
   }
 
   return (await response.json()) as CreateExportBatchResponse;
+}
+
+export async function markExtractionComplete(candidateId: string, comment?: string) {
+  const response = await fetch(`/api/correction/candidates/${candidateId}/mark-complete`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      actor: "evidence-workbench",
+      ...(comment?.trim() ? { comment: comment.trim() } : {})
+    })
+  });
+
+  if (!response.ok) {
+    const body = (await response.json().catch(() => undefined)) as { message?: string } | undefined;
+    throw new Error(body?.message ?? `Request failed: ${response.status}`);
+  }
+
+  return (await response.json()) as MarkExtractionCompleteResponse;
+}
+
+export async function saveRecordReview(input: {
+  candidateId: string;
+  recordId: string;
+  decision: SanctionsDeltaRecordReview["decision"];
+  comment?: string;
+}) {
+  const response = await fetch(`/api/correction/candidates/${input.candidateId}/records/${input.recordId}/review`, {
+    method: "PUT",
+    headers: {
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      actor: "evidence-workbench",
+      decision: input.decision,
+      ...(input.comment?.trim() ? { comment: input.comment.trim() } : {})
+    })
+  });
+
+  if (!response.ok) {
+    const body = (await response.json().catch(() => undefined)) as { message?: string } | undefined;
+    throw new Error(body?.message ?? `Request failed: ${response.status}`);
+  }
+
+  return (await response.json()) as SaveRecordReviewResponse;
 }
 
 export async function runRssMonitor(input: { watchQueryId: string; feedUrl?: string; publicationYear?: number }) {

@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import type { CandidateLegalAct, ExtractionResult, SanctionsDeltaRecord } from "@sanctions/domain";
 import { describe, expect, it } from "vitest";
-import { createExportBatch, evaluateReexportState, hashExtractionSnapshot, serializeAuditCsv } from "./service.js";
+import { serializeSanctionsUploadCsv } from "./sanctions-upload-csv.js";
+import { createExportBatch, evaluateReexportState, hashExtractionSnapshot } from "./service.js";
 
 describe("export batch service", () => {
   it("serializes audit CSV rows by deterministic source order and hashes the immutable file bytes", () => {
@@ -10,7 +11,7 @@ describe("export batch service", () => {
       candidate: candidate(),
       extractionResult: extraction(),
       records,
-      completeExtractionGate: { ready: true, blockers: [] },
+      completeExtractionGate: { ready: true, blockers: [], checks: [] },
       existingBatches: [],
       actor: "export-user",
       createdAt: "2026-05-17T08:30:00.000Z",
@@ -59,10 +60,9 @@ describe("export batch service", () => {
   });
 
   it("serializes records in the target sanctions upload CSV schema", () => {
-    const csv = serializeAuditCsv({
+    const csv = serializeSanctionsUploadCsv({
       batch: { id: "export-batch-001", createdAt: "2026-05-20T08:30:00.000Z" },
       candidate: candidate(),
-      extractionResult: extraction(),
       records: [
         record({ id: "record-1", sourceOrder: 1 }),
         record({
@@ -93,7 +93,7 @@ describe("export batch service", () => {
       candidate: candidate(),
       extractionResult: extraction(),
       records: [record({ id: "record-1", sourceOrder: 1 })],
-      completeExtractionGate: { ready: true, blockers: [] },
+      completeExtractionGate: { ready: true, blockers: [], checks: [] },
       existingBatches: [],
       actor: "export-user",
       createdAt: "2026-05-17T08:30:00.000Z",

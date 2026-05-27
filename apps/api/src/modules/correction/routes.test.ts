@@ -4,6 +4,8 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildServer } from "../../app.js";
 import {
+  candidateLegalActs,
+  extractionResults,
   resetCandidateLegalActsForTests,
   sanctionsDeltaRecords
 } from "../seed-data.js";
@@ -127,6 +129,119 @@ describe("extraction correction routes", () => {
           }
         }
       }
+    });
+  });
+
+  it("marks an otherwise clean extraction complete and records the correction", async () => {
+    const server = buildServer();
+    await retrieveAndClassifyDeltaCandidate(server);
+    const candidate = candidateLegalActs.find((item) => item.id === "candidate-delta-001")!;
+    const extractionResult = extractionResults.find((item) => item.candidateId === candidate.id)!;
+    candidate.status = "NEEDS_EXTRACTION_CORRECTION";
+    extractionResult.isComplete = false;
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/correction/candidates/candidate-delta-001/mark-complete",
+      payload: {
+        actor: "analyst@example.test",
+        comment: "Verified the Annex contains exactly the extracted records"
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      candidate: { status: "EXTRACTED_COMPLETE" },
+      extractionResult: { isComplete: true },
+      correctionAction: {
+        actionType: "MARK_EXTRACTION_COMPLETE",
+        actor: "analyst@example.test",
+        beforeValues: { isComplete: false, status: "NEEDS_EXTRACTION_CORRECTION" },
+        afterValues: { isComplete: true, status: "EXTRACTED_COMPLETE" },
+        comment: "Verified the Annex contains exactly the extracted records"
+      },
+      completeExtractionGate: {
+        ready: true,
+        blockers: []
+      }
+    });
+
+    const detailResponse = await server.inject({
+      method: "GET",
+      url: "/candidates/candidate-delta-001"
+    });
+
+    expect(detailResponse.json()).toMatchObject({
+      candidate: { status: "EXTRACTED_COMPLETE" },
+      extractionResults: [{ isComplete: true }],
+      correctionActions: [{ actionType: "MARK_EXTRACTION_COMPLETE" }],
+      completeExtractionGate: { ready: true }
+    });
+  });
+
+  it("persists optional record review decisions without changing export readiness", async () => {
+    const server = buildServer();
+    await retrieveAndClassifyDeltaCandidate(server);
+
+    const response = await server.inject({
+      method: "PUT",
+      url: "/correction/candidates/candidate-delta-001/records/delta-candidate-delta-001-annex-i-section-1-row-1/review",
+      payload: {
+        actor: "analyst@example.test",
+        decision: "good",
+        comment: "Name and evidence reviewed"
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      recordReview: {
+        candidateId: "candidate-delta-001",
+        recordId: "delta-candidate-delta-001-annex-i-section-1-row-1",
+        decision: "good",
+        actor: "analyst@example.test",
+        comment: "Name and evidence reviewed"
+      }
+    });
+
+    const detailResponse = await server.inject({
+      method: "GET",
+      url: "/candidates/candidate-delta-001"
+    });
+
+    expect(detailResponse.json()).toMatchObject({
+      recordReviews: [
+        {
+          recordId: "delta-candidate-delta-001-annex-i-section-1-row-1",
+          decision: "good"
+        }
+      ],
+      completeExtractionGate: { ready: true }
+    });
+  });
+
+  it("rejects record review after export", async () => {
+    const server = buildServer();
+    await retrieveAndClassifyDeltaCandidate(server);
+
+    await server.inject({
+      method: "POST",
+      url: "/export/candidates/candidate-delta-001/batches",
+      payload: { actor: "exporter@example.test" }
+    });
+
+    const response = await server.inject({
+      method: "PUT",
+      url: "/correction/candidates/candidate-delta-001/records/delta-candidate-delta-001-annex-i-section-1-row-1/review",
+      payload: {
+        actor: "analyst@example.test",
+        decision: "good"
+      }
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({
+      message: "Record review is not available after export"
     });
   });
 

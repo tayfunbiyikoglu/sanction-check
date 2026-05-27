@@ -1,3 +1,4 @@
+import "../env.js";
 import { resolveRuntimePersistenceConfig } from "../modules/persistence/config.js";
 import { runMigrations } from "../modules/persistence/migrations.js";
 import { createPostgresPool } from "../modules/persistence/postgres.js";

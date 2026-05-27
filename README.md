@@ -27,8 +27,83 @@ RSS alerts are only discovery triggers for candidate legal acts. They must not b
 
 The MVP uses Node.js and TypeScript across the API, dashboard, and shared domain modules, with PostgreSQL for persistence and React/TypeScript for the Evidence Workbench UI.
 
+## Local Development Setup
+
+### Prerequisites
+
+- Node.js 22 or newer
+- npm
+- Docker with Docker Compose
+
+### First-Time Setup From a Fresh Clone
+
+1. Install dependencies:
+
+   ```bash
+   npm install
+   ```
+
+2. Create local environment configuration:
+
+   ```bash
+   cp .env.example .env
+   ```
+
+   The default `.env.example` points the API at the local PostgreSQL service from `docker-compose.yml`.
+
+3. Start PostgreSQL:
+
+   ```bash
+   docker compose up -d postgres
+   ```
+
+4. Create or update database tables:
+
+   ```bash
+   npm run db:migrate --workspace @sanctions/api
+   ```
+
+5. Seed baseline configuration:
+
+   ```bash
+   npm run db:seed --workspace @sanctions/api
+   ```
+
+6. Start the API:
+
+   ```bash
+   npm run dev:api
+   ```
+
+   The API listens on `http://localhost:4000`.
+
+7. In a second terminal, start the web app:
+
+   ```bash
+   npm run dev:web
+   ```
+
+   The web app listens on `http://localhost:5173` and proxies `/api/*` requests to the API.
+
+### Useful Checks
+
+```bash
+npm run typecheck
+npm test
+```
+
+For a quick API smoke check after startup, open `http://localhost:4000/health`.
+
+### Data And Storage Notes
+
+Database schema is recreated from SQL migrations in `apps/api/db/migrations/`. Baseline Configured Base Acts and Watch Queries are seeded from `apps/api/src/modules/seed-data.ts`.
+
+Operational data such as monitor runs, discovered candidates, extraction results, exports, and downloaded Source Content is not part of the repository. A fresh clone starts with an empty operational database after migration and seed. Source Content files are stored under `storage/source-content/` and are intentionally ignored by Git except for `.gitkeep`.
+
+Never commit `.env`; it is ignored by Git and may contain local credentials.
+
 ## Current Prototype Status
 
 The local prototype can run the saved EUR-Lex RSS feed, retrieve official English Source Content from public CELLAR, classify/extract EUR-Lex XHTML Annex tables, and export complete Candidate Legal Acts. A proven live case is CELEX `32026R1055`, which extracts 23 Sanctions Delta Records from the Annex.
 
-Persistence is the next implementation target. The running API still keeps operational state in memory, so PostgreSQL wiring should be the next slice before deeper workflow polish.
+PostgreSQL persistence is wired for local runtime. Focused tests still use in-memory repositories unless they explicitly exercise PostgreSQL behavior.

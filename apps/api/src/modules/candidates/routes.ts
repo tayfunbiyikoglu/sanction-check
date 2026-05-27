@@ -1,15 +1,15 @@
 import type { FastifyInstance } from "fastify";
-import { evaluateCompleteExtractionGate } from "../correction/complete-extraction-gate.js";
 import {
   candidateLegalActs,
   correctionActions,
   configuredBaseActs,
   exportBatches,
   extractionResults,
+  recordReviews,
   sanctionsDeltaRecords,
   watchQueries
 } from "../seed-data.js";
-import { evaluateReexportState } from "../export/service.js";
+import { buildCandidateLegalActWorkbenchDetail } from "../evidence-workbench/read-model.js";
 
 export async function registerCandidateRoutes(server: FastifyInstance) {
   server.get("/", async () => ({
@@ -28,30 +28,26 @@ export async function registerCandidateRoutes(server: FastifyInstance) {
     const candidateExtractionResults = server.persistence.monitoring
       ? await server.persistence.monitoring.listExtractionResults(candidate.id)
       : extractionResults.filter((result) => result.candidateId === candidate.id);
-    const latestExtractionResult = candidateExtractionResults.at(-1);
     const candidateRecords = server.persistence.monitoring
       ? await server.persistence.monitoring.listSanctionsDeltaRecords(candidate.id)
       : sanctionsDeltaRecords.filter((record) => record.candidateId === candidate.id);
+    const candidateCorrectionActions = server.persistence.monitoring
+      ? await server.persistence.monitoring.listCorrectionActions(candidate.id)
+      : correctionActions;
+    const candidateRecordReviews = server.persistence.monitoring
+      ? await server.persistence.monitoring.listRecordReviews(candidate.id)
+      : recordReviews.filter((review) => review.candidateId === candidate.id);
+    const allExportBatches = server.persistence.exports ? await server.persistence.exports.listExportBatches() : exportBatches;
 
-    return {
+    return buildCandidateLegalActWorkbenchDetail({
       candidate,
       configuredBaseActs: server.persistence.mode === "postgres" ? await server.persistence.configuration.listConfiguredBaseActs() : configuredBaseActs,
       watchQueries: server.persistence.mode === "postgres" ? await server.persistence.configuration.listWatchQueries() : watchQueries,
       extractionResults: candidateExtractionResults,
       sanctionsDeltaRecords: candidateRecords,
-      correctionActions: correctionActions.filter((action) => action.candidateId === candidate.id),
-      exportBatches: exportBatches.filter((batch) => batch.candidateId === candidate.id),
-      reexportState: evaluateReexportState({
-        candidate,
-        ...(latestExtractionResult ? { extractionResult: latestExtractionResult } : {}),
-        records: candidateRecords,
-        existingBatches: exportBatches
-      }),
-      completeExtractionGate: evaluateCompleteExtractionGate({
-        candidate,
-        ...(latestExtractionResult ? { extractionResult: latestExtractionResult } : {}),
-        records: candidateRecords
-      })
-    };
+      recordReviews: candidateRecordReviews,
+      correctionActions: candidateCorrectionActions,
+      exportBatches: allExportBatches
+    });
   });
 }

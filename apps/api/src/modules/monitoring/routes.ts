@@ -1,14 +1,14 @@
 import path from "node:path";
 import type { FastifyInstance } from "fastify";
-import { evaluateOperationalAlerts } from "../audit/service.js";
 import {
   candidateLegalActs,
+  exportBatches,
   extractionResults,
-  getMonitorOverview,
   monitorRuns,
   recordAuditEvent,
   watchQueries
 } from "../seed-data.js";
+import { buildEvidenceWorkbenchOverview } from "../evidence-workbench/read-model.js";
 import {
   EurLexSearchConfigurationError,
   LiveEurLexWebServiceSearchAdapter,
@@ -26,38 +26,27 @@ export async function registerMonitoringRoutes(server: FastifyInstance) {
     if (server.persistence.monitoring) {
       const persistedCandidates = await server.persistence.monitoring.listCandidates();
       const persistedMonitorRuns = await server.persistence.monitoring.listMonitorRuns();
+      const persistedExportBatches = server.persistence.exports ? await server.persistence.exports.listExportBatches() : [];
+      const persistedExtractionResults = (
+        await Promise.all(
+          persistedCandidates.map((candidate) => server.persistence.monitoring!.listExtractionResults(candidate.id))
+        )
+      ).flat();
 
-      return {
-        overview: {
-          lastSuccessfulRun: persistedMonitorRuns.find((run) => run.status === "SUCCESS")?.finishedAt,
-          candidatesToday: persistedCandidates.length,
-          candidatesNeedingExtractionCorrection: persistedCandidates.filter(
-            (candidate) => candidate.status === "NEEDS_EXTRACTION_CORRECTION"
-          ).length,
-          completeExtractionsReadyForExport: persistedCandidates.filter(
-            (candidate) => candidate.status === "EXTRACTED_COMPLETE"
-          ).length,
-          exportBatchesCreatedToday: 0,
-          failedRetrievalOrParsing: persistedCandidates.filter(
-            (candidate) => candidate.status === "FAILED_RETRIEVAL" || candidate.status === "FAILED_PARSING"
-          ).length
-        },
-        operationalAlerts: evaluateOperationalAlerts({
-          candidateLegalActs: persistedCandidates,
-          extractionResults: [],
-          monitorRuns: persistedMonitorRuns
-        })
-      };
+      return buildEvidenceWorkbenchOverview({
+        candidateLegalActs: persistedCandidates,
+        exportBatches: persistedExportBatches,
+        extractionResults: persistedExtractionResults,
+        monitorRuns: persistedMonitorRuns
+      });
     }
 
-    return {
-      overview: getMonitorOverview(),
-      operationalAlerts: evaluateOperationalAlerts({
-        candidateLegalActs,
-        extractionResults,
-        monitorRuns
-      })
-    };
+    return buildEvidenceWorkbenchOverview({
+      candidateLegalActs,
+      exportBatches,
+      extractionResults,
+      monitorRuns
+    });
   });
 
   server.get("/runs", async () => ({

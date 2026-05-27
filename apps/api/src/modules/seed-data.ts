@@ -9,6 +9,7 @@ import type {
   MonitorOverview,
   MonitorRun,
   SanctionsDeltaRecord,
+  SanctionsDeltaRecordReview,
   WatchQuery
 } from "@sanctions/domain";
 import { resolveLegalActIdentity } from "@sanctions/domain";
@@ -171,6 +172,7 @@ export function resetCandidateLegalActsForTests() {
   sanctionsDeltaRecords.splice(0);
   extractionResults.splice(0);
   correctionActions.splice(0);
+  recordReviews.splice(0);
   exportBatches.splice(0);
   exportBatchRecords.splice(0);
   exportDownloadEvents.splice(0);
@@ -181,6 +183,7 @@ export function resetCandidateLegalActsForTests() {
 export const sanctionsDeltaRecords: SanctionsDeltaRecord[] = [];
 export const extractionResults: ExtractionResult[] = [];
 export const correctionActions: ExtractionCorrectionAction[] = [];
+export const recordReviews: SanctionsDeltaRecordReview[] = [];
 export const exportBatches: ExportBatch[] = [];
 export const exportBatchRecords: ExportBatchRecord[] = [];
 export const exportDownloadEvents: ExportDownloadEvent[] = [];

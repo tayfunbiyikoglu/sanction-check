@@ -23,12 +23,12 @@ export class PersistenceConfigurationError extends Error {
 export function resolveRuntimePersistenceConfig(env: NodeJS.ProcessEnv = process.env): RuntimePersistenceConfig {
   const explicitMode = parsePersistenceMode(env.PERSISTENCE_MODE);
 
-  if (explicitMode === "memory") {
+  if (env.NODE_ENV === "test" && explicitMode !== "postgres") {
     return { mode: "memory" };
   }
 
-  if (env.NODE_ENV === "test" && explicitMode !== "postgres") {
-    return { mode: "memory" };
+  if (explicitMode === "memory") {
+    throw new PersistenceConfigurationError("PERSISTENCE_MODE=memory is only supported for tests. Runtime uses PostgreSQL.");
   }
 
   const databaseUrl = env.DATABASE_URL;
