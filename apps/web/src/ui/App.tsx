@@ -1,6 +1,5 @@
 import type {
   CandidateLegalAct,
-  CandidateStatus,
   CompleteExtractionGateResult,
   ExportBatch,
   ExportDownloadEvent,
@@ -8,14 +7,16 @@ import type {
   ExtractionResult,
   MonitorOverview,
   SanctionsDeltaRecord,
+  SanctionsDeltaRecordReview,
   WatchQuery
 } from "@sanctions/domain";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  ApiRequestError,
   aiExtractSourceContent,
+  classifySourceContent,
   createExportBatch,
   createRssWatchQuery,
-  classifySourceContent,
   fetchCandidateDetail,
   fetchCandidateLegalActs,
   fetchConfiguration,
@@ -23,34 +24,29 @@ import {
   fetchAuditEvents,
   fetchMonitorOverview,
   fetchSourceContent,
+  markExtractionComplete,
   retrieveSourceContent,
-  runRssMonitor
+  runRssMonitor,
+  saveRecordReview
 } from "../api/client.js";
-import type { CandidateDetailResponse, SourceContentResponse } from "../api/client.js";
+import type { AiExtractionUndercountResponse, CandidateDetailResponse, SourceContentResponse } from "../api/client.js";
 import type { AuditEvent } from "../api/client.js";
+import { SourceContentPanel } from "./SourceContentPanel.js";
+import {
+  getExportReadiness,
+  getInitialCandidateId,
+  getLatestExtractionResult,
+  groupCandidatesByStatus,
+  RSS_PUBLICATION_YEAR,
+  type EvidenceJumpRequest,
+  type LiveActionKind,
+  type QueueFilter,
+  type ReviewDecision,
+  type SourceView,
+  type Theme
+} from "./workbench-model.js";
 
-type QueueFilter = "ALL" | CandidateStatus;
-type SourceView = "official" | "metadata";
-type LiveActionKind = "rss" | "retrieve" | "classify" | "ai-extract" | null;
-type Theme = "light" | "dark";
-interface EvidenceJumpRequest {
-  recordId: string;
-  requestedAt: number;
-}
-const RSS_PUBLICATION_YEAR = 2026;
-
-const statusOrder: CandidateStatus[] = [
-  "NEEDS_EXTRACTION_CORRECTION",
-  "REEXPORT_REQUIRED",
-  "EXTRACTED_COMPLETE",
-  "EXPORTED",
-  "NO_DELTA",
-  "CONTENT_RETRIEVED",
-  "DETECTED",
-  "LANGUAGE_PENDING",
-  "FAILED_RETRIEVAL",
-  "FAILED_PARSING"
-];
+export { getExportReadiness, groupCandidatesByStatus } from "./workbench-model.js";
 
 export function App() {
   const [theme, setTheme] = useState<Theme>(() => readStoredTheme());
@@ -66,7 +62,10 @@ export function App() {
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [exportActionError, setExportActionError] = useState<string | null>(null);
+  const [aiExtractionUndercount, setAiExtractionUndercount] = useState<AiExtractionUndercountResponse | null>(null);
   const [isCreatingExportBatch, setIsCreatingExportBatch] = useState(false);
+  const [isMarkingExtractionComplete, setIsMarkingExtractionComplete] = useState(false);
+  const [markCompleteComment, setMarkCompleteComment] = useState("");
   const [liveActionKind, setLiveActionKind] = useState<LiveActionKind>(null);
   const [liveActionMessage, setLiveActionMessage] = useState<string | null>(null);
   const [watchQueries, setWatchQueries] = useState<WatchQuery[]>([]);
@@ -256,26 +255,6 @@ export function App() {
     }
   }
 
-  async function handleClassifySourceContent() {
-    if (!selectedCandidate) {
-      return;
-    }
-
-    setLiveActionKind("classify");
-    setLiveActionMessage(null);
-    setExportActionError(null);
-
-    try {
-      await classifySourceContent(selectedCandidate.id);
-      await refreshSelectedCandidate(selectedCandidate.id);
-      setLiveActionMessage("Source Content classified and Annex records extracted.");
-    } catch (cause) {
-      setExportActionError(cause instanceof Error ? cause.message : "Unable to classify Source Content");
-    } finally {
-      setLiveActionKind(null);
-    }
-  }
-
   async function handleAiExtractSourceContent() {
     if (!selectedCandidate) {
       return;
@@ -284,13 +263,38 @@ export function App() {
     setLiveActionKind("ai-extract");
     setLiveActionMessage(null);
     setExportActionError(null);
+    setAiExtractionUndercount(null);
 
     try {
       await aiExtractSourceContent(selectedCandidate.id);
       await refreshSelectedCandidate(selectedCandidate.id);
       setLiveActionMessage("AI extraction completed from official Source Content.");
     } catch (cause) {
+      if (cause instanceof ApiRequestError && isAiExtractionUndercountResponse(cause.body)) {
+        setAiExtractionUndercount(cause.body);
+      }
       setExportActionError(cause instanceof Error ? cause.message : "Unable to run AI extraction");
+    } finally {
+      setLiveActionKind(null);
+    }
+  }
+
+  async function handleUseAnnexExtraction() {
+    if (!selectedCandidate) {
+      return;
+    }
+
+    setLiveActionKind("annex-extract");
+    setLiveActionMessage(null);
+    setExportActionError(null);
+
+    try {
+      await classifySourceContent(selectedCandidate.id);
+      setAiExtractionUndercount(null);
+      await refreshSelectedCandidate(selectedCandidate.id);
+      setLiveActionMessage("Deterministic Annex extraction applied.");
+    } catch (cause) {
+      setExportActionError(cause instanceof Error ? cause.message : "Unable to apply deterministic Annex extraction");
     } finally {
       setLiveActionKind(null);
     }
@@ -312,7 +316,9 @@ export function App() {
       setSourceContent(cachedSourceContent ?? null);
       setSourceError(null);
       setExportActionError(null);
+      setAiExtractionUndercount(null);
       setReexportReason("");
+      setMarkCompleteComment("");
 
       if (cachedDetail && (cachedSourceContent || !cachedDetail.candidate.sourceContent)) {
         return;
@@ -417,6 +423,26 @@ export function App() {
     }
   }
 
+  async function handleMarkExtractionComplete() {
+    if (!selectedCandidate) {
+      return;
+    }
+
+    setIsMarkingExtractionComplete(true);
+    setExportActionError(null);
+
+    try {
+      await markExtractionComplete(selectedCandidate.id, markCompleteComment);
+      setMarkCompleteComment("");
+      await refreshSelectedCandidate(selectedCandidate.id);
+      setLiveActionMessage("Complete Extraction marked after analyst review.");
+    } catch (cause) {
+      setExportActionError(cause instanceof Error ? cause.message : "Unable to mark extraction complete");
+    } finally {
+      setIsMarkingExtractionComplete(false);
+    }
+  }
+
   return (
     <main className="shell">
       <header className="topbar">
@@ -426,7 +452,7 @@ export function App() {
           </span>
           <div>
             <p className="eyebrow">Evidence Workbench</p>
-            <h1>Candidate Legal Act operations</h1>
+            <h1>Candidate Workbench</h1>
           </div>
         </div>
         <nav aria-label="Primary">
@@ -621,10 +647,6 @@ export function App() {
                     {liveActionKind === "retrieve" ? <span className="spinner" aria-hidden="true" /> : null}
                     Retrieve live
                   </button>
-                  <button disabled={liveActionKind !== null || !selectedCandidate.sourceContent} onClick={handleClassifySourceContent}>
-                    {liveActionKind === "classify" ? <span className="spinner" aria-hidden="true" /> : null}
-                    Classify
-                  </button>
                   <button
                     className={liveActionKind === "ai-extract" ? "busyAction" : ""}
                     disabled={liveActionKind !== null || !selectedCandidate.sourceContent}
@@ -648,6 +670,12 @@ export function App() {
             records={selectedRecords}
             sourceError={sourceError}
           />
+          <AiExtractionUndercountPanel
+            disabled={liveActionKind !== null}
+            isApplying={liveActionKind === "annex-extract"}
+            onUseAnnexExtraction={handleUseAnnexExtraction}
+            undercount={aiExtractionUndercount}
+          />
         </section>
 
         <aside className="recordPanel" aria-label="Sanctions Delta Records and export readiness">
@@ -661,6 +689,9 @@ export function App() {
             </span>
           </div>
           <RecordTable
+            candidate={candidateDetail?.candidate ?? selectedCandidate}
+            reviewAvailable={(candidateDetail?.candidate ?? selectedCandidate)?.status !== "EXPORTED" && selectedBatches.length === 0}
+            recordReviews={candidateDetail?.recordReviews ?? []}
             records={selectedRecords}
             onJumpToEvidence={(recordId) => {
               setSourceView("official");
@@ -671,6 +702,10 @@ export function App() {
             extraction={selectedExtraction}
             correctionActions={candidateDetail?.correctionActions ?? []}
             gate={completeExtractionGate}
+            isMarkingComplete={isMarkingExtractionComplete}
+            markCompleteComment={markCompleteComment}
+            onMarkComplete={handleMarkExtractionComplete}
+            onMarkCompleteCommentChange={setMarkCompleteComment}
           />
           <ExportReadinessPanel
             batches={selectedBatches}
@@ -690,13 +725,13 @@ export function App() {
           <div className="sectionHeader">
             <div>
               <h2>Extraction Correction</h2>
-              <p>Source-backed correction state for the selected Candidate Legal Act</p>
+              <p>Manual correction actions recorded for the selected Candidate Legal Act</p>
             </div>
             <span className="countBadge">{candidateDetail?.correctionActions.length ?? 0}</span>
           </div>
           <div className="supportBody">
-            <ExtractionPanel
-              extraction={selectedExtraction}
+            <CorrectionHistory
+              candidate={candidateDetail?.candidate ?? selectedCandidate}
               correctionActions={candidateDetail?.correctionActions ?? []}
               gate={completeExtractionGate}
             />
@@ -726,6 +761,95 @@ export function App() {
         <ExportBatchTable batches={exportBatches} downloadEvents={downloadEvents} />
       </section>
     </main>
+  );
+}
+
+type AiRecordPreview = AiExtractionUndercountResponse["aiRecords"][number];
+
+function isAiExtractionUndercountResponse(value: unknown): value is AiExtractionUndercountResponse {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const response = value as Partial<AiExtractionUndercountResponse>;
+  return (
+    response.code === "AI_EXTRACTION_UNDERCOUNT" &&
+    typeof response.aiRecordCount === "number" &&
+    typeof response.deterministicRecordCount === "number" &&
+    Array.isArray(response.aiRecords) &&
+    Array.isArray(response.deterministicRecords)
+  );
+}
+
+function AiExtractionUndercountPanel({
+  disabled,
+  isApplying,
+  onUseAnnexExtraction,
+  undercount
+}: {
+  disabled: boolean;
+  isApplying: boolean;
+  onUseAnnexExtraction: () => void;
+  undercount: AiExtractionUndercountResponse | null;
+}) {
+  if (!undercount) {
+    return null;
+  }
+
+  return (
+    <div className="aiUndercountPanel" role="status" aria-live="polite">
+      <div className="aiUndercountHeader">
+        <div>
+          <p className="eyebrow">AI Extraction Review</p>
+          <h3>AI returned fewer records than Annex parsing</h3>
+        </div>
+        <div className="aiUndercountCounts">
+          <span>
+            AI <strong>{undercount.aiRecordCount}</strong>
+          </span>
+          <span>
+            Annex <strong>{undercount.deterministicRecordCount}</strong>
+          </span>
+        </div>
+      </div>
+      <p className="aiUndercountMessage">{undercount.message}</p>
+      <div className="aiUndercountActions">
+        <button disabled={disabled} onClick={onUseAnnexExtraction}>
+          {isApplying ? <span className="spinner" aria-hidden="true" /> : null}
+          {isApplying ? "Applying Annex extraction..." : `Use Annex extraction (${undercount.deterministicRecordCount})`}
+        </button>
+      </div>
+      <div className="aiUndercountGrid">
+        <RecordPreviewList label="AI records returned" records={undercount.aiRecords} />
+        <RecordPreviewList label="Deterministic records found" records={undercount.deterministicRecords} />
+      </div>
+    </div>
+  );
+}
+
+function RecordPreviewList({ label, records }: { label: string; records: AiRecordPreview[] }) {
+  return (
+    <div className="aiRecordPreview">
+      <div className="aiRecordPreviewHeader">
+        <h4>{label}</h4>
+        <span>{records.length}</span>
+      </div>
+      {records.length > 0 ? (
+        <ol>
+          {records.map((record) => (
+            <li key={`${record.sourceOrder}-${record.primaryName}-${record.actionType}`}>
+              <strong>{record.primaryName || "Unnamed record"}</strong>
+              <span>
+                {record.recordType} · {formatDeltaAction(record.actionType)}
+              </span>
+              {record.sourceLocation ? <small>{record.sourceLocation}</small> : null}
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p className="loadState">No records returned.</p>
+      )}
+    </div>
   );
 }
 
@@ -770,185 +894,32 @@ function CandidateSummary({
   );
 }
 
-function SourceContentPanel({
-  candidate,
-  content,
-  evidenceJumpRequest,
-  extraction,
-  hasCandidate,
-  records,
-  sourceContent,
-  sourceView,
-  sourceError
-}: {
-  candidate: CandidateLegalAct | null;
-  content: string | undefined;
-  evidenceJumpRequest: EvidenceJumpRequest | null;
-  extraction: ExtractionResult | undefined;
-  hasCandidate: boolean;
-  records: SanctionsDeltaRecord[];
-  sourceContent: SourceContentResponse | null;
-  sourceView: SourceView;
-  sourceError: string | null;
-}) {
-  const evidenceLineRefs = useRef(new Map<string, HTMLDivElement>());
-  const processedEvidenceJumpRequest = useRef<number | null>(null);
-  const [highlightedEvidenceRecordId, setHighlightedEvidenceRecordId] = useState<string | null>(null);
-  const evidenceMatchers = useMemo(() => buildEvidenceMatchers(records), [records]);
-  const sourceRows = useMemo(() => {
-    if (!content) {
-      return [];
-    }
-
-    return selectVisibleSourceLines(formatSourceLines(content), evidenceMatchers).map((item) => {
-      if (item.kind === "omission") {
-        return (
-          <div className="sourceOmission" key={item.key}>
-            {item.omittedCount.toLocaleString()} source lines hidden for faster navigation
-          </div>
-        );
-      }
-
-      return (
-        <div
-          className={`sourceLine ${item.evidenceMatches.length > 0 ? "highlighted" : ""} ${
-            item.evidenceMatches.some((record) => record.recordId === highlightedEvidenceRecordId) ? "jumpHighlighted" : ""
-          }`}
-          key={`${item.index}-${item.line}`}
-          ref={(element) => {
-            for (const match of item.evidenceMatches) {
-              if (element) {
-                evidenceLineRefs.current.set(match.recordId, element);
-              } else {
-                evidenceLineRefs.current.delete(match.recordId);
-              }
-            }
-          }}
-        >
-          <span>{item.index + 1}</span>
-          <p>{item.line}</p>
-          {item.evidenceMatches.length > 0 ? (
-            <small>Evidence Text for {item.evidenceMatches.map((record) => record.primaryName).join(", ")}</small>
-          ) : null}
-        </div>
-      );
-    });
-  }, [content, evidenceMatchers, highlightedEvidenceRecordId]);
-
-  useEffect(() => {
-    if (
-      !evidenceJumpRequest ||
-      sourceView !== "official" ||
-      processedEvidenceJumpRequest.current === evidenceJumpRequest.requestedAt
-    ) {
-      return;
-    }
-
-    const element = evidenceLineRefs.current.get(evidenceJumpRequest.recordId);
-
-    if (!element) {
-      return;
-    }
-
-    processedEvidenceJumpRequest.current = evidenceJumpRequest.requestedAt;
-    element.scrollIntoView({ behavior: "smooth", block: "center" });
-    setHighlightedEvidenceRecordId(evidenceJumpRequest.recordId);
-
-    const timeout = window.setTimeout(() => setHighlightedEvidenceRecordId(null), 2200);
-
-    return () => window.clearTimeout(timeout);
-  }, [evidenceJumpRequest, sourceView]);
-
-  if (sourceView === "metadata") {
-    return (
-      <SourceMetadataView
-        candidate={candidate}
-        extraction={extraction}
-        sourceContent={sourceContent}
-        sourceError={sourceError}
-      />
-    );
-  }
-
-  if (!content) {
-    return (
-      <div className="sourceEmpty">
-        <h3>{sourceError ? "Source Content unavailable" : hasCandidate ? "Loading Source Content" : "No Candidate Legal Act selected"}</h3>
-        <p>{sourceError ?? (hasCandidate ? "Official English Source Content is being requested." : "Run RSS monitoring or select a Candidate Legal Act.")}</p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="evidence" aria-label="Evidence Text in Source Content">
-      {sourceRows}
-    </div>
-  );
-}
-
-function SourceMetadataView({
-  candidate,
-  extraction,
-  sourceContent,
-  sourceError
-}: {
-  candidate: CandidateLegalAct | null;
-  extraction: ExtractionResult | undefined;
-  sourceContent: SourceContentResponse | null;
-  sourceError: string | null;
-}) {
-  return (
-    <div className="metadataPanel">
-      <dl className="metadataGrid">
-        <div>
-          <dt>Source reference</dt>
-          <dd>{sourceContent?.sourceContent.reference ?? sourceError ?? "Not retrieved"}</dd>
-        </div>
-        <div>
-          <dt>Source URI</dt>
-          <dd>{sourceContent?.sourceContent.sourceUri ?? candidate?.sourceUrl ?? "Unknown"}</dd>
-        </div>
-        <div>
-          <dt>Content type</dt>
-          <dd>{sourceContent?.sourceContent.contentType ?? "Unknown"}</dd>
-        </div>
-        <div>
-          <dt>Content length</dt>
-          <dd>{sourceContent ? `${sourceContent.sourceContent.contentLength.toLocaleString()} bytes` : "Unknown"}</dd>
-        </div>
-        <div>
-          <dt>Content hash</dt>
-          <dd className="hashCell">{sourceContent?.sourceContent.contentHash ?? "Not available"}</dd>
-        </div>
-        <div>
-          <dt>Retrieved at</dt>
-          <dd>{sourceContent ? formatDateTime(sourceContent.sourceContent.retrievedAt) : "Not retrieved"}</dd>
-        </div>
-        <div>
-          <dt>Parser version</dt>
-          <dd>{extraction?.parserVersion ?? "No parser run"}</dd>
-        </div>
-        <div>
-          <dt>Extraction result</dt>
-          <dd>{extraction ? `${formatClassification(extraction.classification)} · ${Math.round(extraction.confidence * 100)}%` : "Pending"}</dd>
-        </div>
-      </dl>
-    </div>
-  );
-}
-
 function RecordTable({
+  candidate,
+  recordReviews,
   records,
+  reviewAvailable,
   onJumpToEvidence
 }: {
+  candidate: CandidateLegalAct | null;
+  recordReviews: SanctionsDeltaRecordReview[];
   records: SanctionsDeltaRecord[];
+  reviewAvailable: boolean;
   onJumpToEvidence: (recordId: string) => void;
 }) {
   const [selectedRecordId, setSelectedRecordId] = useState<string | null>(records[0]?.id ?? null);
   const [expandedEvidenceRecordId, setExpandedEvidenceRecordId] = useState<string | null>(null);
+  const [reviewMode, setReviewMode] = useState(false);
+  const [reviewDecisions, setReviewDecisions] = useState<Record<string, ReviewDecision>>(() =>
+    buildReviewDecisionMap(recordReviews)
+  );
+  const [reviewSaveError, setReviewSaveError] = useState<string | null>(null);
+  const [savingReviewRecordId, setSavingReviewRecordId] = useState<string | null>(null);
   const selectedRecord = records.find((record) => record.id === selectedRecordId) ?? records[0] ?? null;
+  const selectedRecordIndex = selectedRecord ? records.findIndex((record) => record.id === selectedRecord.id) : -1;
   const isEvidenceExpanded = selectedRecord ? expandedEvidenceRecordId === selectedRecord.id : false;
   const shouldCollapseEvidence = Boolean(selectedRecord && selectedRecord.evidenceText.length > 180);
+  const reviewCounts = getReviewCounts(records, reviewDecisions);
 
   useEffect(() => {
     if (!selectedRecordId || !records.some((record) => record.id === selectedRecordId)) {
@@ -957,35 +928,247 @@ function RecordTable({
     }
   }, [records, selectedRecordId]);
 
+  useEffect(() => {
+    if (records.length === 0 || !reviewAvailable) {
+      setReviewMode(false);
+    }
+  }, [records.length, reviewAvailable]);
+
+  useEffect(() => {
+    setReviewDecisions(buildReviewDecisionMap(recordReviews));
+  }, [recordReviews]);
+
+  useEffect(() => {
+    if (!reviewMode) {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        moveSelectedRecord(1);
+      } else if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        moveSelectedRecord(-1);
+      } else if (event.key.toLowerCase() === "g") {
+        event.preventDefault();
+        void markSelectedRecord("good", true);
+      } else if (event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        void markSelectedRecord("flagged", true);
+      } else if (event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        void markSelectedRecord("skipped", true);
+      } else if (event.key.toLowerCase() === "e" && selectedRecord) {
+        event.preventDefault();
+        onJumpToEvidence(selectedRecord.id);
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        setReviewMode(false);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [reviewMode, selectedRecord, selectedRecordIndex, records, reviewAvailable]);
+
+  function moveSelectedRecord(direction: 1 | -1) {
+    if (records.length === 0) {
+      return;
+    }
+
+    const nextIndex = Math.max(0, Math.min(records.length - 1, selectedRecordIndex + direction));
+    selectRecord(records[nextIndex]?.id ?? null, { jumpToEvidence: true });
+    setExpandedEvidenceRecordId(null);
+  }
+
+  function selectRecord(recordId: string | null, options: { jumpToEvidence?: boolean } = {}) {
+    setSelectedRecordId(recordId);
+
+    if (recordId && options.jumpToEvidence) {
+      onJumpToEvidence(recordId);
+    }
+  }
+
+  function enterReviewMode() {
+    setReviewMode(true);
+
+    if (selectedRecord) {
+      onJumpToEvidence(selectedRecord.id);
+    }
+  }
+
+  async function markSelectedRecord(decision: ReviewDecision, advance = false) {
+    if (!selectedRecord || !candidate || !reviewAvailable) {
+      return;
+    }
+
+    setReviewSaveError(null);
+    setSavingReviewRecordId(selectedRecord.id);
+    setReviewDecisions((current) => ({
+      ...current,
+      [selectedRecord.id]: decision
+    }));
+
+    try {
+      await saveRecordReview({
+        candidateId: candidate.id,
+        recordId: selectedRecord.id,
+        decision
+      });
+
+      if (advance && selectedRecordIndex < records.length - 1) {
+        selectRecord(records[selectedRecordIndex + 1]?.id ?? null, { jumpToEvidence: true });
+        setExpandedEvidenceRecordId(null);
+      }
+    } catch (cause) {
+      setReviewSaveError(cause instanceof Error ? cause.message : "Unable to save record review");
+    } finally {
+      setSavingReviewRecordId(null);
+    }
+  }
+
   if (records.length === 0) {
     return <p className="recordEmpty">No Sanctions Delta Records extracted for this Candidate Legal Act.</p>;
   }
 
-  return (
-    <div className="recordReview">
-      <div className="recordList" aria-label="Extracted Sanctions Delta Records">
-        {records.map((record) => (
-          <button
-            className={`recordListItem ${record.id === selectedRecord?.id ? "selected" : ""}`}
-            key={record.id}
-            onClick={() => setSelectedRecordId(record.id)}
-          >
-            <span className="recordOrder">{record.sourceOrder}</span>
-            <span className="recordNameBlock">
-              <strong>{record.primaryName}</strong>
-              <small>
-                {record.affectedAnnex ?? "Annex unknown"} · {record.recordType}
-              </small>
-            </span>
-            <span className={`deltaAction ${record.actionType.toLowerCase()}`}>
-              {formatDeltaAction(record.actionType)}
-            </span>
-          </button>
-        ))}
-      </div>
+  if (reviewMode && selectedRecord) {
+    const selectedDecision = reviewDecisions[selectedRecord.id];
 
-      <div className="recordDetail" aria-label="Selected Sanctions Delta Record">
-        {selectedRecord ? (
+    return (
+      <div className="nameReviewMode">
+        <div className="reviewToolbar">
+          <div>
+            <strong>Name review</strong>
+            <span>
+              {reviewCounts.reviewed} of {records.length} reviewed · {reviewCounts.flagged} flagged ·{" "}
+              {reviewCounts.skipped} skipped
+            </span>
+          </div>
+          <button onClick={() => setReviewMode(false)}>Exit review</button>
+        </div>
+
+        <div className="reviewProgress" aria-hidden="true">
+          <span style={{ width: `${Math.round((reviewCounts.reviewed / records.length) * 100)}%` }} />
+        </div>
+
+        <div className="reviewCard">
+          <div className="reviewCardHeader">
+            <div>
+              <p>
+                Record {selectedRecordIndex + 1} of {records.length}
+              </p>
+              <h3>{selectedRecord.primaryName}</h3>
+            </div>
+            <ReviewDecisionBadge decision={selectedDecision} />
+          </div>
+
+          <div className="reviewChips">
+            <span className="recordType">{selectedRecord.recordType}</span>
+            <span className={`deltaAction ${selectedRecord.actionType.toLowerCase()}`}>
+              {formatDeltaAction(selectedRecord.actionType)}
+            </span>
+            <span>{selectedRecord.affectedAnnex ?? "Annex unknown"}</span>
+            <span>{Math.round(selectedRecord.confidence * 100)}% confidence</span>
+          </div>
+
+          <dl className="recordFacts reviewFacts">
+            <div>
+              <dt>Source order</dt>
+              <dd>{selectedRecord.sourceOrder}</dd>
+            </div>
+            <div>
+              <dt>Source location</dt>
+              <dd>{selectedRecord.sourceLocation ?? "Not identified"}</dd>
+            </div>
+          </dl>
+
+          <div className="evidenceBlock reviewEvidence">
+            <div className="evidenceBlockHeader">
+              <strong>Evidence text</strong>
+              <button onClick={() => onJumpToEvidence(selectedRecord.id)}>Jump to evidence</button>
+            </div>
+            <p>{selectedRecord.evidenceText}</p>
+          </div>
+
+          <div className="reviewActions">
+            <button
+              className={selectedDecision === "good" ? "selected good" : "good"}
+              disabled={savingReviewRecordId === selectedRecord.id}
+              onClick={() => void markSelectedRecord("good", true)}
+            >
+              Looks good
+            </button>
+            <button
+              className={selectedDecision === "flagged" ? "selected flagged" : "flagged"}
+              disabled={savingReviewRecordId === selectedRecord.id}
+              onClick={() => void markSelectedRecord("flagged", true)}
+            >
+              Needs correction
+            </button>
+            <button
+              className={selectedDecision === "skipped" ? "selected skipped" : "skipped"}
+              disabled={savingReviewRecordId === selectedRecord.id}
+              onClick={() => void markSelectedRecord("skipped", true)}
+            >
+              Skip
+            </button>
+          </div>
+          {reviewSaveError ? <p className="reviewError">{reviewSaveError}</p> : null}
+
+          <div className="reviewFooter">
+            <button disabled={selectedRecordIndex <= 0} onClick={() => moveSelectedRecord(-1)}>
+              Previous
+            </button>
+            <span>Shortcuts: ←/→ · G good · F flag · S skip · E evidence · Esc exit</span>
+            <button disabled={selectedRecordIndex >= records.length - 1} onClick={() => moveSelectedRecord(1)}>
+              Next
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="recordReviewToolbar">
+        <div>
+          <strong>{reviewCounts.reviewed} reviewed</strong>
+          <span>{reviewAvailable ? `${reviewCounts.flagged} flagged` : "Review closed after export"}</span>
+        </div>
+        {reviewAvailable ? <button onClick={enterReviewMode}>Review names</button> : null}
+      </div>
+      <div className="recordReview">
+        <div className="recordList" aria-label="Extracted Sanctions Delta Records">
+          {records.map((record) => (
+            <button
+              className={`recordListItem ${record.id === selectedRecord?.id ? "selected" : ""}`}
+              key={record.id}
+              onClick={() => selectRecord(record.id, { jumpToEvidence: true })}
+            >
+              <span className="recordOrder">{record.sourceOrder}</span>
+              <span className="recordNameBlock">
+                <strong>{record.primaryName}</strong>
+                <small>
+                  {record.affectedAnnex ?? "Annex unknown"} · {record.recordType}
+                </small>
+              </span>
+              <ReviewDecisionMarker decision={reviewDecisions[record.id]} />
+              <span className={`deltaAction ${record.actionType.toLowerCase()}`}>
+                {formatDeltaAction(record.actionType)}
+              </span>
+            </button>
+          ))}
+        </div>
+
+        <div className="recordDetail" aria-label="Selected Sanctions Delta Record">
+          {selectedRecord ? (
           <>
             <div className="recordDetailHeader">
               <div>
@@ -1033,21 +1216,65 @@ function RecordTable({
               </p>
             </div>
           </>
-        ) : null}
+          ) : null}
+        </div>
       </div>
-    </div>
+    </>
   );
+}
+
+function ReviewDecisionMarker({ decision }: { decision: ReviewDecision | undefined }) {
+  return <span className={`reviewMarker ${decision ?? "unreviewed"}`} aria-label={decision ?? "unreviewed"} />;
+}
+
+function ReviewDecisionBadge({ decision }: { decision: ReviewDecision | undefined }) {
+  if (!decision) {
+    return <span className="reviewDecisionBadge unreviewed">Unreviewed</span>;
+  }
+
+  const label = decision === "good" ? "Looks good" : decision === "flagged" ? "Needs correction" : "Skipped";
+  return <span className={`reviewDecisionBadge ${decision}`}>{label}</span>;
+}
+
+function getReviewCounts(records: SanctionsDeltaRecord[], decisions: Record<string, ReviewDecision>) {
+  const values = records.map((record) => decisions[record.id]).filter(Boolean) as ReviewDecision[];
+
+  return {
+    reviewed: values.length,
+    good: values.filter((decision) => decision === "good").length,
+    flagged: values.filter((decision) => decision === "flagged").length,
+    skipped: values.filter((decision) => decision === "skipped").length
+  };
+}
+
+function buildReviewDecisionMap(recordReviews: SanctionsDeltaRecordReview[]): Record<string, ReviewDecision> {
+  return Object.fromEntries(recordReviews.map((review) => [review.recordId, review.decision]));
 }
 
 function ExtractionPanel({
   extraction,
   correctionActions,
-  gate
+  gate,
+  isMarkingComplete,
+  markCompleteComment,
+  onMarkComplete,
+  onMarkCompleteCommentChange
 }: {
   extraction: ExtractionResult | undefined;
   correctionActions: ExtractionCorrectionAction[];
   gate: CompleteExtractionGateResult | null;
+  isMarkingComplete: boolean;
+  markCompleteComment: string;
+  onMarkComplete: () => void;
+  onMarkCompleteCommentChange: (value: string) => void;
 }) {
+  const canMarkComplete =
+    Boolean(extraction) &&
+    Boolean(gate?.checks.some((check) => check.id === "complete-extraction-confirmed" && !check.passed)) &&
+    gate?.blockers.length === 1 &&
+    Boolean(gate.blockers[0]?.includes("incomplete") || gate.blockers[0]?.includes("not mark"));
+  const completionCheck = gate?.checks.find((check) => check.id === "complete-extraction-confirmed");
+
   return (
     <div className="stackPanel">
       <div className="stackHeader">
@@ -1073,22 +1300,103 @@ function ExtractionPanel({
         </div>
       </dl>
       <ul className="gateList">
-        {gate?.ready ? (
-          <li className="done">Complete Extraction is ready for Candidate Legal Act export evaluation.</li>
+        {gate?.checks.length ? (
+          gate.checks.map((check) => (
+            <li className={check.passed ? "done" : "blocked"} key={check.id}>
+              <strong>{check.label}</strong>
+              <span>{check.passed ? "Passed" : check.message}</span>
+            </li>
+          ))
+        ) : gate?.ready ? (
+          <li className="done">
+            <strong>Complete Extraction</strong>
+            <span>Ready for Candidate Legal Act export evaluation.</span>
+          </li>
         ) : gate ? (
           gate.blockers.map((blocker) => (
             <li className="blocked" key={blocker}>
-              {blocker}
+              <strong>Blocked</strong>
+              <span>{blocker}</span>
             </li>
           ))
         ) : (
-          <li className="blocked">Candidate Legal Act detail is loading.</li>
+          <li className="blocked">
+            <strong>Loading</strong>
+            <span>Candidate Legal Act detail is loading.</span>
+          </li>
         )}
       </ul>
+      {canMarkComplete ? (
+        <div className="markCompleteBox">
+          <p>
+            {completionCheck?.message ??
+              "The extracted records pass field checks, but the extractor did not confirm full Annex coverage."}
+          </p>
+          <label htmlFor="mark-complete-comment">Reviewer note</label>
+          <textarea
+            id="mark-complete-comment"
+            rows={3}
+            value={markCompleteComment}
+            onChange={(event) => onMarkCompleteCommentChange(event.target.value)}
+            placeholder="Verified the official Annex count and extracted records."
+          />
+          <button disabled={isMarkingComplete} onClick={onMarkComplete}>
+            {isMarkingComplete ? "Marking..." : "Mark complete"}
+          </button>
+        </div>
+      ) : null}
       <div className="correctionStrip">
         <span>Extraction Correction</span>
         <strong>{correctionActions.length}</strong>
       </div>
+    </div>
+  );
+}
+
+function CorrectionHistory({
+  candidate,
+  correctionActions,
+  gate
+}: {
+  candidate: CandidateLegalAct | null;
+  correctionActions: ExtractionCorrectionAction[];
+  gate: CompleteExtractionGateResult | null;
+}) {
+  if (correctionActions.length === 0) {
+    return (
+      <div className="correctionEmpty">
+        <div>
+          <h3>No correction actions recorded</h3>
+          <p>
+            {candidate?.status === "EXPORTED"
+              ? "This legal act is already exported and no manual extraction corrections were recorded for it."
+              : gate?.ready
+                ? "The extracted records currently pass the complete-extraction gate without manual corrections."
+                : "If extraction issues are found, correction actions will appear here."}
+          </p>
+        </div>
+        <span className={`status ${gate?.ready ? "extracted_complete" : "needs_extraction_correction"}`}>
+          {gate?.ready ? "No correction needed" : "Correction may be needed"}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="correctionList">
+      {correctionActions.map((action) => (
+        <div className="correctionItem" key={action.id}>
+          <div>
+            <strong>{formatStatus(action.actionType)}</strong>
+            <span>{formatDateTime(action.occurredAt)}</span>
+          </div>
+          <p>{action.comment ?? action.evidenceText ?? "Extraction completeness was confirmed by analyst review."}</p>
+          <small>
+            {action.actor}
+            {action.sourceLocation ? ` · ${action.sourceLocation}` : ""}
+          </small>
+        </div>
+      ))}
     </div>
   );
 }
@@ -1247,52 +1555,6 @@ function Metric({
   );
 }
 
-export function groupCandidatesByStatus(candidates: CandidateLegalAct[]) {
-  const orderedStatuses = [
-    ...statusOrder,
-    ...candidates.map((candidate) => candidate.status).filter((status) => !statusOrder.includes(status))
-  ];
-
-  return orderedStatuses.map((status) => ({
-    status,
-    candidates: candidates
-      .filter((candidate) => candidate.status === status)
-      .sort(compareCandidatesByNewestPublication)
-  }));
-}
-
-function compareCandidatesByNewestPublication(left: CandidateLegalAct, right: CandidateLegalAct) {
-  const publicationComparison = compareOptionalDateDesc(left.publicationDate, right.publicationDate);
-
-  if (publicationComparison !== 0) {
-    return publicationComparison;
-  }
-
-  const seenComparison = compareOptionalDateDesc(left.lastSeenAt, right.lastSeenAt);
-
-  if (seenComparison !== 0) {
-    return seenComparison;
-  }
-
-  return left.title.localeCompare(right.title);
-}
-
-function compareOptionalDateDesc(left: string | undefined, right: string | undefined) {
-  if (left && right) {
-    return right.localeCompare(left);
-  }
-
-  if (left) {
-    return -1;
-  }
-
-  if (right) {
-    return 1;
-  }
-
-  return 0;
-}
-
 function readStoredTheme(): Theme {
   if (typeof window === "undefined") {
     return "light";
@@ -1305,94 +1567,6 @@ function readStoredTheme(): Theme {
   }
 
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-}
-
-export function getExportReadiness({
-  candidate,
-  completeExtractionGate,
-  extractionResult,
-  exportBatches,
-  reexportRequired
-}: {
-  candidate: CandidateLegalAct | null;
-  completeExtractionGate: CompleteExtractionGateResult | null;
-  extractionResult: ExtractionResult | undefined;
-  exportBatches: ExportBatch[];
-  reexportRequired: boolean;
-}) {
-  if (!candidate) {
-    return {
-      label: "No Candidate Legal Act",
-      reason: "Select a Candidate Legal Act before creating an Export Batch.",
-      canCreateExportBatch: false,
-      requiresReexport: false
-    };
-  }
-
-  if (candidate.status === "NO_DELTA") {
-    return {
-      label: "No Delta",
-      reason: "This Candidate Legal Act is classified as No Delta, so no Export Batch is required.",
-      canCreateExportBatch: false,
-      requiresReexport: false
-    };
-  }
-
-  if (!extractionResult) {
-    return {
-      label: "Parser pending",
-      reason: "A parser result is required before Complete Extraction can be evaluated.",
-      canCreateExportBatch: false,
-      requiresReexport: false
-    };
-  }
-
-  if (!completeExtractionGate?.ready) {
-    return {
-      label: "Gate blocked",
-      reason: "Complete Extraction is blocked. Use Extraction Correction before creating an Export Batch.",
-      canCreateExportBatch: false,
-      requiresReexport: false
-    };
-  }
-
-  if (reexportRequired) {
-    return {
-      label: "Re-Export required",
-      reason: "Current Complete Extraction differs from the latest immutable Export Batch.",
-      canCreateExportBatch: true,
-      requiresReexport: true
-    };
-  }
-
-  if (exportBatches.length > 0 || candidate.status === "EXPORTED") {
-    return {
-      label: "Export Batch exists",
-      reason: "The latest Complete Extraction already has an immutable Export Batch.",
-      canCreateExportBatch: false,
-      requiresReexport: false
-    };
-  }
-
-  return {
-    label: "Ready",
-    reason: "Complete Extraction is ready for one immutable Export Batch containing all Sanctions Delta Records.",
-    canCreateExportBatch: true,
-    requiresReexport: false
-  };
-}
-
-function getInitialCandidateId(candidates: CandidateLegalAct[]) {
-  return (
-    candidates.find((candidate) => candidate.status === "NEEDS_EXTRACTION_CORRECTION")?.id ??
-    candidates.find((candidate) => candidate.status === "EXTRACTED_COMPLETE")?.id ??
-    candidates[0]?.id ??
-    null
-  );
-}
-
-function getLatestExtractionResult(results: ExtractionResult[]) {
-  return [...results].sort((left, right) => left.createdAt.localeCompare(right.createdAt)).at(-1);
 }
 
 function formatCount(value: number | undefined) {
@@ -1459,135 +1633,4 @@ function statusClass(status: string) {
 
 function shortHash(value: string) {
   return value.length > 12 ? value.slice(0, 12) : value;
-}
-
-function formatSourceLines(content: string) {
-  return content
-    .replace(/<script[\s\S]*?<\/script>/gi, "")
-    .replace(/<style[\s\S]*?<\/style>/gi, "")
-    .replace(/></g, ">\n<")
-    .split(/\r?\n/)
-    .map((line) => line.replace(/<[^>]+>/g, " ").replace(/&nbsp;|&#xa0;|&#160;/g, " ").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim())
-    .filter(Boolean);
-}
-
-interface EvidenceMatcher {
-  recordId: string;
-  primaryName: string;
-  normalizedEvidence: string;
-  evidenceParts: string[];
-}
-
-type VisibleSourceLine =
-  | {
-      kind: "line";
-      index: number;
-      line: string;
-      evidenceMatches: EvidenceMatcher[];
-    }
-  | {
-      kind: "omission";
-      key: string;
-      omittedCount: number;
-    };
-
-const maxRenderedSourceLines = 360;
-const leadingSourceLines = 180;
-const trailingSourceLines = 24;
-const evidenceContextLines = 3;
-
-function selectVisibleSourceLines(lines: string[], matchers: EvidenceMatcher[]): VisibleSourceLine[] {
-  if (lines.length <= maxRenderedSourceLines) {
-    return lines.map((line, index) => ({
-      kind: "line",
-      index,
-      line,
-      evidenceMatches: findEvidenceMatches(line, matchers)
-    }));
-  }
-
-  const included = new Set<number>();
-
-  for (let index = 0; index < Math.min(leadingSourceLines, lines.length); index += 1) {
-    included.add(index);
-  }
-
-  for (let index = Math.max(0, lines.length - trailingSourceLines); index < lines.length; index += 1) {
-    included.add(index);
-  }
-
-  const evidenceMatchesByLine = new Map<number, EvidenceMatcher[]>();
-
-  lines.forEach((line, index) => {
-    const matches = findEvidenceMatches(line, matchers);
-
-    if (matches.length === 0) {
-      return;
-    }
-
-    evidenceMatchesByLine.set(index, matches);
-
-    for (
-      let contextIndex = Math.max(0, index - evidenceContextLines);
-      contextIndex <= Math.min(lines.length - 1, index + evidenceContextLines);
-      contextIndex += 1
-    ) {
-      included.add(contextIndex);
-    }
-  });
-
-  const sortedIndexes = [...included].sort((left, right) => left - right);
-  const visible: VisibleSourceLine[] = [];
-  let previousIndex = -1;
-
-  for (const index of sortedIndexes) {
-    if (index > previousIndex + 1) {
-      visible.push({
-        kind: "omission",
-        key: `omitted-${previousIndex + 1}-${index - 1}`,
-        omittedCount: index - previousIndex - 1
-      });
-    }
-
-    visible.push({
-      kind: "line",
-      index,
-      line: lines[index]!,
-      evidenceMatches: evidenceMatchesByLine.get(index) ?? findEvidenceMatches(lines[index]!, matchers)
-    });
-    previousIndex = index;
-  }
-
-  return visible;
-}
-
-function buildEvidenceMatchers(records: SanctionsDeltaRecord[]): EvidenceMatcher[] {
-  return records
-    .map((record) => {
-      const normalizedEvidence = normalizeEvidence(record.evidenceText);
-      return {
-        recordId: record.id,
-        primaryName: record.primaryName,
-        normalizedEvidence,
-        evidenceParts: normalizedEvidence
-          .split(/[.;]/)
-          .map((part) => part.trim())
-          .filter((part) => part.length > 8)
-      };
-    })
-    .filter((matcher) => matcher.normalizedEvidence.length > 0);
-}
-
-function findEvidenceMatches(line: string, matchers: EvidenceMatcher[]) {
-  const normalizedLine = normalizeEvidence(line);
-
-  return matchers.filter(
-    (matcher) =>
-      normalizedLine.includes(matcher.normalizedEvidence) ||
-      matcher.evidenceParts.some((part) => normalizedLine.includes(part))
-  );
-}
-
-function normalizeEvidence(value: string) {
-  return value.toLowerCase().replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
 }

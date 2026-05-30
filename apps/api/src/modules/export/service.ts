@@ -9,6 +9,8 @@ import type {
   SanctionsDeltaRecord
 } from "@sanctions/domain";
 import { resolveLegalActIdentity } from "@sanctions/domain";
+import { orderRecordsForExport } from "./record-ordering.js";
+import { serializeSanctionsUploadCsv } from "./sanctions-upload-csv.js";
 
 export interface CreateExportBatchInput {
   candidate: CandidateLegalAct;
@@ -46,35 +48,6 @@ export interface RecordDownloadInput {
   downloadedAt?: string;
   downloadId?: string;
 }
-
-const csvColumns = [
-  "export_batch_id",
-  "candidate_id",
-  "legal_act_identity_kind",
-  "legal_act_identity_value",
-  "celex_id",
-  "cellar_id",
-  "official_uri",
-  "title",
-  "publication_date",
-  "working_language",
-  "source_content_hash",
-  "source_content_reference",
-  "source_uri",
-  "source_content_type",
-  "parser_version",
-  "record_id",
-  "source_order",
-  "source_location",
-  "affected_annex",
-  "detected_base_act",
-  "record_type",
-  "action_type",
-  "primary_name",
-  "listed_entry_json",
-  "evidence_text",
-  "confidence"
-] as const;
 
 export function createExportBatch(input: CreateExportBatchInput): CreateExportBatchResult {
   assertExportable(input);
@@ -119,10 +92,9 @@ export function createExportBatch(input: CreateExportBatchInput): CreateExportBa
     ...(latestBatch ? { reexportOfBatchId: latestBatch.id } : {}),
     ...(reexportReason ? { reexportReason } : {})
   };
-  const csv = serializeAuditCsv({
+  const csv = serializeSanctionsUploadCsv({
     batch,
     candidate: input.candidate,
-    extractionResult: input.extractionResult,
     records: orderedRecords
   });
   batch.fileHash = sha256Hex(csv);
@@ -135,45 +107,6 @@ export function createExportBatch(input: CreateExportBatchInput): CreateExportBa
     })),
     csv
   };
-}
-
-export function serializeAuditCsv(input: {
-  batch: Pick<ExportBatch, "id">;
-  candidate: CandidateLegalAct;
-  extractionResult: ExtractionResult;
-  records: SanctionsDeltaRecord[];
-}): string {
-  const identity = resolveLegalActIdentity(input.candidate);
-  const rows = orderRecordsForExport(input.records).map((record) => [
-    input.batch.id,
-    input.candidate.id,
-    identity.kind,
-    identity.value,
-    input.candidate.celexId ?? "",
-    input.candidate.cellarId ?? "",
-    input.candidate.officialUri ?? "",
-    input.candidate.title,
-    input.candidate.publicationDate ?? "",
-    input.candidate.workingLanguage,
-    input.candidate.sourceContent?.contentHash ?? "",
-    input.candidate.sourceContent?.reference ?? "",
-    input.candidate.sourceContent?.sourceUri ?? "",
-    input.candidate.sourceContent?.contentType ?? "",
-    input.extractionResult.parserVersion,
-    record.id,
-    String(record.sourceOrder),
-    record.sourceLocation ?? "",
-    record.affectedAnnex ?? "",
-    record.detectedBaseAct ?? "",
-    record.recordType,
-    record.actionType,
-    record.primaryName,
-    stableStringify(record.listedEntry ?? {}),
-    record.evidenceText,
-    String(record.confidence)
-  ]);
-
-  return [csvColumns.join(","), ...rows.map((row) => row.map(csvEscape).join(","))].join("\n") + "\n";
 }
 
 export function hashExtractionSnapshot(input: {
@@ -268,17 +201,6 @@ export function recordExportDownload(input: RecordDownloadInput): ExportDownload
   };
 }
 
-export function orderRecordsForExport(records: SanctionsDeltaRecord[]): SanctionsDeltaRecord[] {
-  return [...records].sort((left, right) => {
-    return (
-      left.sourceOrder - right.sourceOrder ||
-      (left.affectedAnnex ?? "").localeCompare(right.affectedAnnex ?? "") ||
-      (left.sourceLocation ?? "").localeCompare(right.sourceLocation ?? "") ||
-      left.id.localeCompare(right.id)
-    );
-  });
-}
-
 function assertExportable(input: CreateExportBatchInput) {
   if (!input.completeExtractionGate.ready) {
     throw new ExportBlockedError(input.completeExtractionGate.blockers);
@@ -301,14 +223,6 @@ function buildFileName(candidate: CandidateLegalAct, createdAt: string, kind: "e
 
 function sha256Hex(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
-}
-
-function csvEscape(value: string): string {
-  if (!/[",\n\r]/.test(value)) {
-    return value;
-  }
-
-  return `"${value.replaceAll("\"", "\"\"")}"`;
 }
 
 function stableStringify(value: unknown): string {

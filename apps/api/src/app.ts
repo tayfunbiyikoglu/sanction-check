@@ -16,7 +16,12 @@ export interface BuildServerOptions {
 }
 
 export function buildServer(options: BuildServerOptions = {}) {
-  const server = Fastify({ logger: true });
+  const server = Fastify({
+    logger: true,
+    routerOptions: {
+      maxParamLength: 512
+    }
+  });
   const persistence = options.persistence ?? buildAppPersistence();
 
   decoratePersistence(server, persistence);

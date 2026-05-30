@@ -1,17 +1,20 @@
 import { createHash } from "node:crypto";
 import type {
   CandidateLegalAct,
+  ExtractionCorrectionAction,
   ExtractionResult,
   MonitorRun,
   SanctionsDeltaRecord,
+  SanctionsDeltaRecordReview,
   WatchQuery
 } from "@sanctions/domain";
-import {
-  normalizeLegalActIdentityInput,
-  resolveLegalActIdentity
-} from "@sanctions/domain";
+import { normalizeLegalActIdentityInput } from "@sanctions/domain";
 import type { Pool, PoolClient } from "pg";
 import type { DiscoveryTrigger, ExecuteMonitorRunInput, ExecuteMonitorRunResult } from "./service.js";
+import {
+  buildMonitorRun,
+  mergeDiscoveryTrigger as mergeDiscoveryTriggerCore
+} from "./discovery.js";
 
 export interface MonitoringRepository {
   listCandidates(): Promise<CandidateLegalAct[]>;
@@ -20,6 +23,16 @@ export interface MonitoringRepository {
   listMonitorRuns(): Promise<MonitorRun[]>;
   listExtractionResults(candidateId: string): Promise<ExtractionResult[]>;
   listSanctionsDeltaRecords(candidateId: string): Promise<SanctionsDeltaRecord[]>;
+  listRecordReviews(candidateId: string): Promise<SanctionsDeltaRecordReview[]>;
+  upsertRecordReview(review: SanctionsDeltaRecordReview): Promise<SanctionsDeltaRecordReview>;
+  listCorrectionActions(candidateId: string): Promise<ExtractionCorrectionAction[]>;
+  markLatestExtractionComplete(input: {
+    candidate: CandidateLegalAct;
+    extractionResult: ExtractionResult;
+    actor: string;
+    occurredAt: string;
+    comment?: string;
+  }): Promise<ExtractionCorrectionAction>;
   saveExtractionResult(input: {
     candidate: CandidateLegalAct;
     extractionResult: ExtractionResult;
@@ -103,6 +116,111 @@ export class PostgresMonitoringRepository implements MonitoringRepository {
     return result.rows.map(mapSanctionsDeltaRecord);
   }
 
+  async listRecordReviews(candidateId: string): Promise<SanctionsDeltaRecordReview[]> {
+    const result = await this.pool.query<RecordReviewRow>(
+      `select rr.*
+       from record_review rr
+       join sanction_delta_record sdr on sdr.id = rr.record_id
+       join extraction_result er on er.id = sdr.extraction_result_id
+       where rr.candidate_id = $1
+         and er.id = (
+           select id
+           from extraction_result
+           where candidate_id = $1
+           order by created_at desc, id desc
+           limit 1
+         )
+       order by rr.reviewed_at asc, rr.record_id asc`,
+      [candidateId]
+    );
+
+    return result.rows.map(mapRecordReview);
+  }
+
+  async upsertRecordReview(review: SanctionsDeltaRecordReview): Promise<SanctionsDeltaRecordReview> {
+    await this.pool.query(
+      `insert into record_review (record_id, candidate_id, decision, actor, reviewed_at, comment)
+       values ($1, $2, $3, $4, $5, $6)
+       on conflict (record_id) do update
+       set decision = excluded.decision,
+           actor = excluded.actor,
+           reviewed_at = excluded.reviewed_at,
+           comment = excluded.comment`,
+      [
+        review.recordId,
+        review.candidateId,
+        review.decision,
+        review.actor,
+        review.reviewedAt,
+        review.comment ?? null
+      ]
+    );
+
+    return review;
+  }
+
+  async listCorrectionActions(candidateId: string): Promise<ExtractionCorrectionAction[]> {
+    const result = await this.pool.query<CorrectionActionRow>(
+      `select *
+       from correction_action
+       where candidate_id = $1
+       order by action_at asc, id asc`,
+      [candidateId]
+    );
+
+    return result.rows.map(mapCorrectionAction);
+  }
+
+  async markLatestExtractionComplete(input: {
+    candidate: CandidateLegalAct;
+    extractionResult: ExtractionResult;
+    actor: string;
+    occurredAt: string;
+    comment?: string;
+  }): Promise<ExtractionCorrectionAction> {
+    const client = await this.pool.connect();
+    const correctionAction: ExtractionCorrectionAction = {
+      id: `correction-action-${input.extractionResult.id}-mark-complete`,
+      candidateId: input.candidate.id,
+      actionType: "MARK_EXTRACTION_COMPLETE",
+      actor: input.actor,
+      occurredAt: input.occurredAt,
+      beforeValues: { isComplete: input.extractionResult.isComplete, status: input.candidate.status },
+      afterValues: { isComplete: true, status: "EXTRACTED_COMPLETE" },
+      ...(input.comment ? { comment: input.comment } : {})
+    };
+
+    try {
+      await client.query("begin");
+      await client.query("update extraction_result set is_complete = true where id = $1", [input.extractionResult.id]);
+      await client.query("update legal_act_candidate set status = $2 where id = $1", [
+        input.candidate.id,
+        "EXTRACTED_COMPLETE"
+      ]);
+      await client.query(
+        `insert into correction_action (
+           id, candidate_id, record_id, action, actor, action_at, before_value, after_value, comment
+         ) values ($1, $2, null, 'MARK_EXTRACTION_COMPLETE', $3, $4, $5, $6, $7)`,
+        [
+          correctionAction.id,
+          correctionAction.candidateId,
+          correctionAction.actor,
+          correctionAction.occurredAt,
+          JSON.stringify(correctionAction.beforeValues),
+          JSON.stringify(correctionAction.afterValues),
+          correctionAction.comment ?? null
+        ]
+      );
+      await client.query("commit");
+      return correctionAction;
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async saveExtractionResult(input: {
     candidate: CandidateLegalAct;
     extractionResult: ExtractionResult;
@@ -162,19 +280,18 @@ export class PostgresMonitoringRepository implements MonitoringRepository {
         });
       }
 
-      const monitorRun: MonitorRun = {
-        id: createMonitorRunId(),
-        startedAt,
+      const monitorRun: MonitorRun = buildMonitorRun({
+        discoveryErrors: errors,
         finishedAt,
-        status: errors.length === 0 ? "SUCCESS" : records.some((record) => record.candidate) ? "PARTIAL" : "FAILED",
-        source: watchQuery.source,
-        watchQueryId: watchQuery.id,
-        querySnapshot: watchQuery.queryText,
-        itemsSeen: input.itemsSeen ?? input.triggers.length,
+        monitorRunId: createMonitorRunId(),
         newCandidates,
-        ...(input.searchResponse ? { searchResponse: input.searchResponse } : {}),
-        ...(errors.length > 0 ? { errorMessage: errors.join("; ") } : {})
-      };
+        seenCandidateCount: records.filter((record) => record.candidate).length,
+        startedAt,
+        triggerCount: input.triggers.length,
+        watchQuery,
+        ...(input.itemsSeen !== undefined ? { itemsSeen: input.itemsSeen } : {}),
+        ...(input.searchResponse ? { searchResponse: input.searchResponse } : {})
+      });
 
       await insertMonitorRun(client, monitorRun);
 
@@ -231,39 +348,29 @@ async function mergeDiscoveryTrigger(
 ): Promise<DiscoveryTriggerRecord> {
   try {
     const normalized = normalizeLegalActIdentityInput(trigger);
-    const identity = resolveLegalActIdentity(normalized);
     const existing = await findCandidateByAnyIdentity(client, normalized);
+    const merged = mergeDiscoveryTriggerCore({
+      existingCandidates: existing ? [existing] : [],
+      fallbackCandidateIdSeed: Date.now(),
+      seenAt,
+      trigger,
+      watchQuery
+    });
 
-    if (existing) {
-      const refreshed = await refreshCandidate(client, existing, trigger, seenAt);
-
+    if (!merged.created) {
+      await updateCandidate(client, merged.candidate);
       return {
         trigger,
-        candidate: refreshed,
+        candidate: merged.candidate,
         status: "CANDIDATE_REFRESHED"
       };
     }
 
-    const candidate: CandidateLegalAct = {
-      id: createCandidateId(identity.value),
-      ...normalized,
-      legalActIdentityKind: identity.kind,
-      legalActIdentityValue: identity.value,
-      title: trigger.title,
-      ...(trigger.publicationDate ? { publicationDate: trigger.publicationDate } : {}),
-      status: "DETECTED",
-      workingLanguage: "en",
-      ...(trigger.sourceUrl ? { sourceUrl: trigger.sourceUrl } : {}),
-      rssFeedName: trigger.rssFeedName ?? watchQuery.name,
-      detectedAt: trigger.discoveredAt ?? seenAt,
-      lastSeenAt: seenAt
-    };
-
-    await insertCandidate(client, candidate);
+    await insertCandidate(client, merged.candidate);
 
     return {
       trigger,
-      candidate,
+      candidate: merged.candidate,
       status: "CANDIDATE_CREATED"
     };
   } catch (error) {
@@ -396,8 +503,9 @@ async function insertExtractionResult(
   await client.query(
     `insert into extraction_result (
        id, candidate_id, parser_version, classification, confidence, annex_found,
-       annex_heading, is_complete, evidence_text, source_content_ref, source_content_hash, created_at
-     ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+       annex_heading, is_complete, evidence_text, source_content_ref, source_content_hash, created_at,
+       ai_call_metadata
+     ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
     [
       extractionResult.id,
       extractionResult.candidateId,
@@ -410,7 +518,8 @@ async function insertExtractionResult(
       extractionResult.evidenceText ?? null,
       candidate.sourceContent?.reference ?? null,
       candidate.sourceContent?.contentHash ?? null,
-      extractionResult.createdAt
+      extractionResult.createdAt,
+      extractionResult.aiCall ? JSON.stringify(extractionResult.aiCall) : null
     ]
   );
 }
@@ -442,62 +551,6 @@ async function insertSanctionsDeltaRecord(
       record.confidence
     ]
   );
-}
-
-async function refreshCandidate(
-  client: PoolClient,
-  candidate: CandidateLegalAct,
-  trigger: DiscoveryTrigger,
-  seenAt: string
-): Promise<CandidateLegalAct> {
-  const normalized = normalizeLegalActIdentityInput(trigger);
-  const enriched = {
-    ...candidate,
-    ...(normalized.celexId ? { celexId: normalized.celexId } : {}),
-    ...(normalized.cellarId ? { cellarId: normalized.cellarId } : {}),
-    ...(normalized.officialUri ? { officialUri: normalized.officialUri } : {}),
-    title: trigger.title || candidate.title,
-    ...(trigger.publicationDate ? { publicationDate: trigger.publicationDate } : {}),
-    ...(trigger.sourceUrl ? { sourceUrl: trigger.sourceUrl } : {}),
-    ...(trigger.rssFeedName ? { rssFeedName: trigger.rssFeedName } : {}),
-    lastSeenAt: seenAt
-  };
-  const identity = resolveLegalActIdentity(enriched);
-  const refreshed: CandidateLegalAct = {
-    ...enriched,
-    legalActIdentityKind: identity.kind,
-    legalActIdentityValue: identity.value
-  };
-
-  await client.query(
-    `update legal_act_candidate
-     set celex_id = $2,
-         cellar_id = $3,
-         official_uri = $4,
-         legal_act_identity_kind = $5,
-         legal_act_identity_value = $6,
-         title = $7,
-         publication_date = $8,
-         source_url = $9,
-         rss_feed_name = $10,
-         last_seen_at = $11
-     where id = $1`,
-    [
-      refreshed.id,
-      refreshed.celexId ?? null,
-      refreshed.cellarId ?? null,
-      refreshed.officialUri ?? null,
-      refreshed.legalActIdentityKind,
-      refreshed.legalActIdentityValue,
-      refreshed.title,
-      refreshed.publicationDate ?? null,
-      refreshed.sourceUrl ?? null,
-      refreshed.rssFeedName ?? null,
-      refreshed.lastSeenAt
-    ]
-  );
-
-  return refreshed;
 }
 
 async function insertMonitorRun(client: PoolClient, monitorRun: MonitorRun): Promise<void> {
@@ -572,16 +625,6 @@ function createDiscoveryTriggerId(): string {
   return `discovery-trigger-${timestamp}-${sequence}`;
 }
 
-function createCandidateId(identityValue: string): string {
-  const slug = identityValue
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 40);
-
-  return `candidate-discovered-${slug || Date.now()}`;
-}
-
 interface CandidateRow {
   id: string;
   celex_id: string | null;
@@ -653,6 +696,7 @@ interface ExtractionResultRow {
   annex_heading: string | null;
   is_complete: boolean;
   evidence_text: string | null;
+  ai_call_metadata: ExtractionResult["aiCall"] | null;
   created_at: Date;
 }
 
@@ -669,6 +713,27 @@ interface SanctionsDeltaRecordRow {
   source_location: string | null;
   evidence_text: string;
   confidence: string | number;
+}
+
+interface RecordReviewRow {
+  candidate_id: string;
+  record_id: string;
+  decision: SanctionsDeltaRecordReview["decision"];
+  actor: string;
+  reviewed_at: Date;
+  comment: string | null;
+}
+
+interface CorrectionActionRow {
+  id: string;
+  candidate_id: string;
+  record_id: string | null;
+  action: "CORRECT_FIELD" | "ADD_RECORD" | "MARK_EXTRACTION_COMPLETE" | "COMMENT";
+  actor: string;
+  action_at: Date;
+  before_value: Record<string, unknown> | null;
+  after_value: Record<string, unknown> | null;
+  comment: string | null;
 }
 
 function mapCandidate(row: CandidateRow): CandidateLegalAct {
@@ -774,6 +839,7 @@ function mapExtractionResult(row: ExtractionResultRow): ExtractionResult {
     ...(row.annex_heading ? { annexHeading: row.annex_heading } : {}),
     isComplete: row.is_complete,
     ...(row.evidence_text ? { evidenceText: row.evidence_text } : {}),
+    ...(row.ai_call_metadata ? { aiCall: row.ai_call_metadata } : {}),
     createdAt: row.created_at.toISOString()
   };
 }
@@ -793,6 +859,43 @@ function mapSanctionsDeltaRecord(row: SanctionsDeltaRecordRow): SanctionsDeltaRe
     evidenceText: row.evidence_text,
     confidence: Number(row.confidence)
   };
+}
+
+function mapRecordReview(row: RecordReviewRow): SanctionsDeltaRecordReview {
+  return {
+    candidateId: row.candidate_id,
+    recordId: row.record_id,
+    decision: row.decision,
+    actor: row.actor,
+    reviewedAt: row.reviewed_at.toISOString(),
+    ...(row.comment ? { comment: row.comment } : {})
+  };
+}
+
+function mapCorrectionAction(row: CorrectionActionRow): ExtractionCorrectionAction {
+  return {
+    id: row.id,
+    candidateId: row.candidate_id,
+    ...(row.record_id ? { recordId: row.record_id } : {}),
+    actionType: mapCorrectionActionType(row.action),
+    actor: row.actor,
+    occurredAt: row.action_at.toISOString(),
+    beforeValues: row.before_value ?? {},
+    afterValues: row.after_value ?? {},
+    ...(row.comment ? { comment: row.comment } : {})
+  };
+}
+
+function mapCorrectionActionType(action: CorrectionActionRow["action"]): ExtractionCorrectionAction["actionType"] {
+  if (action === "CORRECT_FIELD") {
+    return "FIELD_CORRECTION";
+  }
+
+  if (action === "ADD_RECORD") {
+    return "MISSED_RECORD_ADDITION";
+  }
+
+  return "MARK_EXTRACTION_COMPLETE";
 }
 
 function formatDateOnly(value: Date | string): string {

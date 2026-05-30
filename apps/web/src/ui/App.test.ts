@@ -69,7 +69,7 @@ describe("Evidence Workbench workflow helpers", () => {
   it("allows one Export Batch only when Complete Extraction is ready", () => {
     const readiness = getExportReadiness({
       candidate: baseCandidate,
-      completeExtractionGate: { ready: true, blockers: [] },
+      completeExtractionGate: { ready: true, blockers: [], checks: [] },
       extractionResult,
       exportBatches: [],
       reexportRequired: false
@@ -83,7 +83,7 @@ describe("Evidence Workbench workflow helpers", () => {
   it("blocks Export Batch creation for No Delta Candidate Legal Acts", () => {
     const readiness = getExportReadiness({
       candidate: { ...baseCandidate, status: "NO_DELTA" },
-      completeExtractionGate: { ready: true, blockers: [] },
+      completeExtractionGate: { ready: true, blockers: [], checks: [] },
       extractionResult: { ...extractionResult, classification: "NO_DELTA" },
       exportBatches: [],
       reexportRequired: false
@@ -96,20 +96,20 @@ describe("Evidence Workbench workflow helpers", () => {
   it("keeps existing immutable Export Batches visible without a new batch action", () => {
     const readiness = getExportReadiness({
       candidate: { ...baseCandidate, status: "EXPORTED" },
-      completeExtractionGate: { ready: true, blockers: [] },
+      completeExtractionGate: { ready: true, blockers: [], checks: [] },
       extractionResult,
       exportBatches: [exportBatch],
       reexportRequired: false
     });
 
     expect(readiness.canCreateExportBatch).toBe(false);
-    expect(readiness.label).toBe("Export Batch exists");
+    expect(readiness.label).toBe("Already exported");
   });
 
   it("surfaces Re-Export only after the current Complete Extraction differs", () => {
     const readiness = getExportReadiness({
       candidate: { ...baseCandidate, status: "REEXPORT_REQUIRED" },
-      completeExtractionGate: { ready: true, blockers: [] },
+      completeExtractionGate: { ready: true, blockers: [], checks: [] },
       extractionResult,
       exportBatches: [exportBatch],
       reexportRequired: true

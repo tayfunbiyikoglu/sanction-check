@@ -1,7 +1,6 @@
-import path from "node:path";
 import type { CandidateLegalAct } from "@sanctions/domain";
 import { LiveCellarSourceContentAdapter } from "../modules/retrieval/cellar-source-adapter.js";
-import { FilesystemSourceContentRepository } from "../modules/retrieval/source-content-repository.js";
+import { buildSourceContentRepository } from "../modules/retrieval/source-content-repository.js";
 import { SourceRetrievalService } from "../modules/retrieval/source-retrieval-service.js";
 import type { RetrievalClock } from "../modules/retrieval/types.js";
 import { buildSafeCellarSmokeReport, requireLiveSmokeOptIn } from "../modules/integration-smoke/smoke-report.js";
@@ -53,9 +52,10 @@ try {
     endpointUrl: process.env.CELLAR_ENDPOINT_URL,
     apiKey: process.env.CELLAR_API_KEY
   });
-  const repository = new FilesystemSourceContentRepository(
-    process.env.SOURCE_CONTENT_STORAGE_DIR ?? path.resolve(process.cwd(), "../../storage/live-smoke/source-content")
-  );
+  const repository = buildSourceContentRepository({
+    ...process.env,
+    SOURCE_CONTENT_ROOT: process.env.SOURCE_CONTENT_ROOT ?? "storage/live-smoke/source-content"
+  });
   const service = new SourceRetrievalService(adapter, repository, clock);
   const retrieved = await service.retrieveEnglishSourceContent(candidate);
 

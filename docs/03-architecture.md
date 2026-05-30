@@ -39,7 +39,7 @@ The current implementation uses:
 - Backend: Node.js with TypeScript
 - Scheduler: in-process/manual job routes for the local MVP, with a scheduler boundary still expected
 - Database: PostgreSQL for MVP persistence
-- Current persistence: in-memory stores plus filesystem-backed immutable source/search artifacts
+- Current persistence: PostgreSQL-backed operational state plus immutable source/search artifacts outside PostgreSQL. Source Content can use local filesystem storage or Azure Blob Storage through the same reference format.
 - Queue: job/worker abstraction from the start; local MVP may run jobs in-process before choosing Redis, RabbitMQ, Temporal, or a cloud queue
 - Frontend: React with TypeScript
 - Parsing: XML-first parser with EUR-Lex XHTML Annex table support and fallback text extraction
@@ -50,7 +50,7 @@ The current implementation uses:
 
 The local dashboard can run the saved EUR-Lex RSS feed, create or refresh Candidate Legal Acts, retrieve official English Source Content from public CELLAR for known CELEX/CELLAR identities, classify the Source Content, extract EUR-Lex XHTML Annex tables, and export complete candidates.
 
-The important architectural gap is persistence. Candidate state, monitor run results, retrieval state, extraction results, and export state currently live in process memory. After an API restart, the dashboard can rerun RSS/CELLAR/classification, but prior operational state is lost. PostgreSQL wiring is therefore the next implementation slice.
+PostgreSQL persistence is wired for local runtime. Focused tests may still use in-memory stores, but runtime Candidate Legal Act state, monitor runs, retrieval state, extraction results, corrections, and export state are expected to be durable. Source Content bytes remain outside PostgreSQL and are addressed by immutable references.
 
 ## Processing Flow
 

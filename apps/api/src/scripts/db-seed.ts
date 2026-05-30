@@ -1,3 +1,4 @@
+import "../env.js";
 import { PostgresConfigurationRepository } from "../modules/configuration/repository.js";
 import { configuredBaseActs, watchQueries } from "../modules/seed-data.js";
 import { resolveRuntimePersistenceConfig } from "../modules/persistence/config.js";

@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import type { CandidateLegalAct, ExtractionResult, SanctionsDeltaRecord } from "@sanctions/domain";
 import { describe, expect, it } from "vitest";
-import { createExportBatch, evaluateReexportState, hashExtractionSnapshot, serializeAuditCsv } from "./service.js";
+import { serializeSanctionsUploadCsv } from "./sanctions-upload-csv.js";
+import { createExportBatch, evaluateReexportState, hashExtractionSnapshot } from "./service.js";
 
 describe("export batch service", () => {
   it("serializes audit CSV rows by deterministic source order and hashes the immutable file bytes", () => {
@@ -10,7 +11,7 @@ describe("export batch service", () => {
       candidate: candidate(),
       extractionResult: extraction(),
       records,
-      completeExtractionGate: { ready: true, blockers: [] },
+      completeExtractionGate: { ready: true, blockers: [], checks: [] },
       existingBatches: [],
       actor: "export-user",
       createdAt: "2026-05-17T08:30:00.000Z",
@@ -19,9 +20,9 @@ describe("export batch service", () => {
 
     const lines = result.csv.trim().split("\n");
 
-    expect(lines[0]).toContain("export_batch_id,candidate_id,legal_act_identity_kind");
-    expect(lines[1]).toContain("record-1");
-    expect(lines[2]).toContain("record-2");
+    expect(lines[0]).toBe("COUNTRYOFORIGIN,ENTRYDATE,FIRSTNAME,GENDER,ID,ISDELETED,JUSTIFICATION,LEGALSTATUS,NAME,YEAR");
+    expect(lines[1]).toBe(",2026-05-11,Jane,FEMALE,202605170001,FALSE,,NATURAL_PERSON,EXAMPLE,");
+    expect(lines[2]).toBe(",2026-05-11,Jane,FEMALE,202605170002,FALSE,,NATURAL_PERSON,EXAMPLE,");
     expect(result.batch).toMatchObject({
       id: "export-batch-001",
       candidateId: "candidate-1",
@@ -58,18 +59,33 @@ describe("export batch service", () => {
     expect(changedHash).not.toBe(firstHash);
   });
 
-  it("includes audit-friendly source metadata, listed entry JSON, and evidence text", () => {
-    const csv = serializeAuditCsv({
-      batch: { id: "export-batch-001" },
+  it("serializes records in the target sanctions upload CSV schema", () => {
+    const csv = serializeSanctionsUploadCsv({
+      batch: { id: "export-batch-001", createdAt: "2026-05-20T08:30:00.000Z" },
       candidate: candidate(),
-      extractionResult: extraction(),
-      records: [record({ id: "record-1", sourceOrder: 1 })]
+      records: [
+        record({ id: "record-1", sourceOrder: 1 }),
+        record({
+          id: "record-entity-1",
+          sourceOrder: 2,
+          recordType: "ENTITY",
+          primaryName: "All Russian Children's Centre \"Smena\"",
+          listedEntry: {
+            name: "All Russian Children's Centre \"Smena\"",
+            dateoflisting: "11.5.2026"
+          }
+        })
+      ]
     });
 
-    expect(csv).toContain("source_content_hash");
-    expect(csv).toContain("cellar:mock:32026R1001/en/xml");
-    expect(csv).toContain('"{""dateofbirth"":""12 March 1975"",""name"":""Jane Example""}"');
-    expect(csv).toContain("Jane Example; date of birth: 12 March 1975.");
+    expect(csv).toBe(
+      [
+        "COUNTRYOFORIGIN,ENTRYDATE,FIRSTNAME,GENDER,ID,ISDELETED,JUSTIFICATION,LEGALSTATUS,NAME,YEAR",
+        ",2026-05-11,Jane,FEMALE,202605200001,FALSE,,NATURAL_PERSON,EXAMPLE,",
+        ',2026-05-11,,NONE,202605200002,FALSE,,LEGAL_ENTITY,"All Russian Children\'s Centre ""Smena""",',
+        ""
+      ].join("\n")
+    );
   });
 
   it("compares current complete extraction snapshots to the latest export batch", () => {
@@ -77,7 +93,7 @@ describe("export batch service", () => {
       candidate: candidate(),
       extractionResult: extraction(),
       records: [record({ id: "record-1", sourceOrder: 1 })],
-      completeExtractionGate: { ready: true, blockers: [] },
+      completeExtractionGate: { ready: true, blockers: [], checks: [] },
       existingBatches: [],
       actor: "export-user",
       createdAt: "2026-05-17T08:30:00.000Z",
@@ -158,7 +174,9 @@ function record(overrides: Partial<SanctionsDeltaRecord>): SanctionsDeltaRecord 
     primaryName: "Jane Example",
     listedEntry: {
       name: "Jane Example",
-      dateofbirth: "12 March 1975"
+      dateofbirth: "12 March 1975",
+      dateoflisting: "11.5.2026",
+      gender: "Female"
     },
     affectedAnnex: "Annex I",
     detectedBaseAct: "32014R0269",

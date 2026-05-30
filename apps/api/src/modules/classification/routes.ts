@@ -1,5 +1,3 @@
-import path from "node:path";
-import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import {
   candidateLegalActs,
@@ -11,15 +9,21 @@ import {
   upsertCandidateLegalAct,
   upsertExtractionResult
 } from "../seed-data.js";
-import { FilesystemSourceContentRepository } from "../retrieval/source-content-repository.js";
-import { classifyCandidateLegalAct } from "./service.js";
-import { extractAnnexSanctionsDeltaRecords } from "../parser/annex-parser.js";
-import { evaluateReexportState } from "../export/service.js";
+import { buildSourceContentRepository } from "../retrieval/source-content-repository.js";
+import type { SourceContentRepository } from "../retrieval/types.js";
 import {
   AiExtractionConfigurationError,
   AiExtractionProviderError,
+  type AiExtractionResult,
   extractSanctionsDeltaRecordsWithAi
 } from "./ai-extraction-service.js";
+import {
+  CompleteExtractionError,
+  finalizeAssistedCompleteExtraction,
+  runDeterministicCompleteExtraction,
+  scopeRecordsToExtraction,
+  type CompleteExtractionResult
+} from "./complete-extraction.js";
 
 export async function registerClassificationRoutes(server: FastifyInstance) {
   const sourceContentRepository = buildSourceContentRepository();
@@ -40,6 +44,7 @@ export async function registerClassificationRoutes(server: FastifyInstance) {
 
     const classified = await extractCandidateSourceContent({
       candidate,
+      existingBatches: await listExportBatches(server),
       sourceContentRepository,
       createdAt: new Date().toISOString()
     });
@@ -66,6 +71,7 @@ export async function registerClassificationRoutes(server: FastifyInstance) {
 
     const classified = await extractCandidateSourceContent({
       candidate,
+      existingBatches: await listExportBatches(server),
       sourceContentRepository,
       createdAt: new Date().toISOString()
     });
@@ -107,35 +113,41 @@ export async function registerClassificationRoutes(server: FastifyInstance) {
 
     try {
       const content = await sourceContentRepository.read(candidate.sourceContent.reference);
+      const existingBatches = await listExportBatches(server);
+      const createdAt = new Date().toISOString();
+      const deterministicExtraction = runDeterministicCompleteExtraction({
+        candidate,
+        content,
+        createdAt,
+        existingBatches
+      });
       const extracted = await extractSanctionsDeltaRecordsWithAi({
         candidate,
         content,
-        createdAt: new Date().toISOString()
+        createdAt
       });
-      const reexportState = evaluateReexportState({
+      const completed = finalizeAssistedCompleteExtraction({
         candidate: extracted.candidate,
         extractionResult: extracted.extractionResult,
         records: extracted.records,
-        existingBatches: exportBatches
+        existingBatches
       });
+      const undercount = compareAssistedExtractionCount(completed, deterministicExtraction);
 
-      if (reexportState.reexportRequired) {
-        extracted.candidate.status = "REEXPORT_REQUIRED";
+      if (undercount) {
+        return reply.code(409).send(undercount);
       }
 
       if (server.persistence.monitoring) {
         await server.persistence.monitoring.saveExtractionResult({
-          candidate: extracted.candidate,
-          extractionResult: extracted.extractionResult,
-          records: extracted.records.map((record) => ({
-            ...record,
-            id: `${extracted.extractionResult.id}-${record.id}`
-          }))
+          candidate: completed.candidate,
+          extractionResult: completed.extractionResult,
+          records: scopeRecordsToExtraction(completed)
         });
       } else {
-        upsertCandidateLegalAct(extracted.candidate);
-        upsertExtractionResult(extracted.extractionResult);
-        upsertSanctionsDeltaRecords(candidate.id, extracted.records);
+        upsertCandidateLegalAct(completed.candidate);
+        upsertExtractionResult(completed.extractionResult);
+        upsertSanctionsDeltaRecords(candidate.id, completed.records);
       }
 
       recordAuditEvent({
@@ -143,17 +155,16 @@ export async function registerClassificationRoutes(server: FastifyInstance) {
         candidateId: candidate.id,
         occurredAt: extracted.extractionResult.createdAt,
         payload: {
-          parserVersion: extracted.extractionResult.parserVersion,
-          classification: extracted.extractionResult.classification,
-          isComplete: extracted.extractionResult.isComplete,
-          recordCount: extracted.records.length,
+          parserVersion: completed.extractionResult.parserVersion,
+          classification: completed.extractionResult.classification,
+          isComplete: completed.extractionResult.isComplete,
+          recordCount: completed.records.length,
           aiAssisted: true
         }
       });
 
       return {
-        ...extracted,
-        reexportState,
+        ...completed,
         aiAssisted: true
       };
     } catch (cause) {
@@ -188,6 +199,56 @@ export async function registerClassificationRoutes(server: FastifyInstance) {
   });
 }
 
+function compareAssistedExtractionCount(
+  assisted: CompleteExtractionResult,
+  deterministic: CompleteExtractionResult
+):
+  | {
+      message: string;
+      code: "AI_EXTRACTION_UNDERCOUNT";
+      aiRecordCount: number;
+      deterministicRecordCount: number;
+      aiRecords: RecordPreview[];
+      deterministicRecords: RecordPreview[];
+    }
+  | undefined {
+  if (
+    deterministic.extractionResult.isComplete &&
+    deterministic.records.length > 0 &&
+    assisted.extractionResult.isComplete &&
+    assisted.records.length < deterministic.records.length
+  ) {
+    return {
+      message: `AI extraction returned ${assisted.records.length} complete records, but deterministic Annex extraction found ${deterministic.records.length}. Use deterministic extraction or review the AI provider output before export.`,
+      code: "AI_EXTRACTION_UNDERCOUNT",
+      aiRecordCount: assisted.records.length,
+      deterministicRecordCount: deterministic.records.length,
+      aiRecords: previewRecords(assisted.records),
+      deterministicRecords: previewRecords(deterministic.records)
+    };
+  }
+
+  return undefined;
+}
+
+interface RecordPreview {
+  primaryName: string;
+  recordType: string;
+  actionType: string;
+  sourceOrder: number;
+  sourceLocation?: string;
+}
+
+function previewRecords(records: AiExtractionResult["records"]): RecordPreview[] {
+  return records.slice(0, 25).map((record) => ({
+    primaryName: record.primaryName,
+    recordType: record.recordType,
+    actionType: record.actionType,
+    sourceOrder: record.sourceOrder,
+    ...(record.sourceLocation ? { sourceLocation: record.sourceLocation } : {})
+  }));
+}
+
 function appendParsingFailureAuditEvent(classified: Awaited<ReturnType<typeof extractCandidateSourceContent>>) {
   if (classified.extractionResult.classification !== "PARSING_FAILED") {
     return;
@@ -208,66 +269,27 @@ function appendParsingFailureAuditEvent(classified: Awaited<ReturnType<typeof ex
 
 async function extractCandidateSourceContent(input: {
   candidate: (typeof candidateLegalActs)[number];
-  sourceContentRepository: FilesystemSourceContentRepository;
+  existingBatches: typeof exportBatches;
+  sourceContentRepository: SourceContentRepository;
   createdAt: string;
-}) {
-  const content = await input.sourceContentRepository.read(input.candidate.sourceContent!.reference);
-  const classified = classifyCandidateLegalAct({
+}): Promise<CompleteExtractionResult> {
+  if (!input.candidate.sourceContent) {
+    throw new CompleteExtractionError("Official English source content has not been retrieved");
+  }
+
+  const content = await input.sourceContentRepository.read(input.candidate.sourceContent.reference);
+  const classified = runDeterministicCompleteExtraction({
     candidate: input.candidate,
     content,
-    createdAt: input.createdAt
+    createdAt: input.createdAt,
+    existingBatches: input.existingBatches
   });
-
-  if (
-    classified.extractionResult.classification === "DELTA" &&
-    (input.candidate.sourceContent!.contentType === "application/xml" ||
-      input.candidate.sourceContent!.contentType === "text/html")
-  ) {
-    const parsed = extractAnnexSanctionsDeltaRecords({
-      candidateId: input.candidate.id,
-      content,
-      contentType: input.candidate.sourceContent!.contentType,
-      sourceUri: input.candidate.sourceContent!.sourceUri
-    });
-
-    upsertSanctionsDeltaRecords(input.candidate.id, parsed.records);
-
-    if (parsed.isComplete) {
-      classified.candidate.status = "EXTRACTED_COMPLETE";
-      classified.extractionResult.isComplete = true;
-      classified.extractionResult.parserVersion = parsed.parserVersion;
-    }
-  }
-
-  classified.extractionResult.id = [
-    "extraction",
-    input.candidate.id,
-    classified.extractionResult.parserVersion,
-    randomUUID()
-  ].join("-");
-
-  const candidateRecords = sanctionsDeltaRecords.filter((record) => record.candidateId === input.candidate.id);
-  const reexportState = evaluateReexportState({
-    candidate: classified.candidate,
-    extractionResult: classified.extractionResult,
-    records: candidateRecords,
-    existingBatches: exportBatches
-  });
-
-  if (reexportState.reexportRequired) {
-    classified.candidate.status = "REEXPORT_REQUIRED";
-  } else if (reexportState.latestExportBatchId && classified.candidate.status === "EXTRACTED_COMPLETE") {
-    classified.candidate.status = "EXPORTED";
-  }
 
   upsertCandidateLegalAct(classified.candidate);
   upsertExtractionResult(classified.extractionResult);
+  upsertSanctionsDeltaRecords(input.candidate.id, classified.records);
 
-  return {
-    ...classified,
-    records: candidateRecords,
-    reexportState
-  };
+  return classified;
 }
 
 async function persistExtractionIfNeeded(
@@ -281,15 +303,10 @@ async function persistExtractionIfNeeded(
   await server.persistence.monitoring.saveExtractionResult({
     candidate: classified.candidate,
     extractionResult: classified.extractionResult,
-    records: classified.records.map((record) => ({
-      ...record,
-      id: `${classified.extractionResult.id}-${record.id}`
-    }))
+    records: scopeRecordsToExtraction(classified)
   });
 }
 
-function buildSourceContentRepository() {
-  return new FilesystemSourceContentRepository(
-    process.env.SOURCE_CONTENT_STORAGE_DIR ?? path.resolve(process.cwd(), "../../storage/source-content")
-  );
+async function listExportBatches(server: FastifyInstance) {
+  return server.persistence.exports ? await server.persistence.exports.listExportBatches() : exportBatches;
 }

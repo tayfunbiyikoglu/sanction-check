@@ -10,17 +10,51 @@ describe("evaluateCompleteExtractionGate", () => {
         extractionResult: extraction({ classification: "NO_DELTA", isComplete: true, annexFound: false }),
         records: []
       })
-    ).toEqual({ ready: true, blockers: [] });
+    ).toMatchObject({ ready: true, blockers: [] });
   });
 
   it("marks a delta candidate ready when records and parser validation are clean", () => {
     expect(
       evaluateCompleteExtractionGate({
         candidate: candidate({ status: "EXTRACTED_COMPLETE", withSource: true }),
-        extractionResult: extraction({ classification: "DELTA", annexFound: true }),
+        extractionResult: extraction({ classification: "DELTA", annexFound: true, isComplete: true }),
         records: [record()]
       })
-    ).toEqual({ ready: true, blockers: [] });
+    ).toMatchObject({ ready: true, blockers: [] });
+  });
+
+  it("shows the unconfirmed complete-extraction check as a blocker", () => {
+    const result = evaluateCompleteExtractionGate({
+      candidate: candidate({ status: "NEEDS_EXTRACTION_CORRECTION", withSource: true }),
+      extractionResult: extraction({ classification: "DELTA", annexFound: true, isComplete: false }),
+      records: [record()]
+    });
+
+    expect(result.ready).toBe(false);
+    expect(result.blockers).toContain("Parser did not mark the latest extraction complete");
+    expect(result.checks).toContainEqual({
+      id: "complete-extraction-confirmed",
+      label: "Extractor completeness signal",
+      passed: false,
+      message: "Parser did not mark the latest extraction complete"
+    });
+  });
+
+  it("explains when an AI extraction requires human coverage review", () => {
+    const result = evaluateCompleteExtractionGate({
+      candidate: candidate({ status: "NEEDS_EXTRACTION_CORRECTION", withSource: true }),
+      extractionResult: extraction({
+        classification: "DELTA",
+        annexFound: true,
+        isComplete: false,
+        parserVersion: "openai-structured-extractor-v1"
+      }),
+      records: [record()]
+    });
+
+    expect(result.blockers).toContain(
+      "AI extractor returned incomplete; review official Annex coverage before marking complete"
+    );
   });
 
   it("blocks missing source content, missing classification, parser issues, and missing records", () => {

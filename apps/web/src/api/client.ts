@@ -8,6 +8,7 @@ import type {
   ExtractionCorrectionAction,
   ExtractionResult,
   MonitorOverview,
+  SanctionsDeltaRecordReview,
   SanctionsDeltaRecord,
   WatchQuery
 } from "@sanctions/domain";
@@ -22,6 +23,7 @@ export interface CandidateDetailResponse {
   watchQueries: WatchQuery[];
   extractionResults: ExtractionResult[];
   sanctionsDeltaRecords: SanctionsDeltaRecord[];
+  recordReviews: SanctionsDeltaRecordReview[];
   correctionActions: ExtractionCorrectionAction[];
   exportBatches: ExportBatch[];
   reexportState: {
@@ -58,6 +60,17 @@ export interface CreateExportBatchResponse {
   csv: string;
 }
 
+export interface MarkExtractionCompleteResponse {
+  candidate: CandidateLegalAct;
+  extractionResult: ExtractionResult;
+  correctionAction: ExtractionCorrectionAction;
+  completeExtractionGate: CompleteExtractionGateResult;
+}
+
+export interface SaveRecordReviewResponse {
+  recordReview: SanctionsDeltaRecordReview;
+}
+
 export interface RssRunResponse {
   monitorRun: {
     id: string;
@@ -90,6 +103,38 @@ export interface RetrieveSourceContentResponse {
   candidate: CandidateLegalAct;
   retrieval: CandidateLegalAct["retrieval"];
   sourceContent?: CandidateLegalAct["sourceContent"];
+}
+
+export interface AiExtractionUndercountResponse {
+  message: string;
+  code: "AI_EXTRACTION_UNDERCOUNT";
+  aiRecordCount: number;
+  deterministicRecordCount: number;
+  aiRecords: Array<{
+    primaryName: string;
+    recordType: string;
+    actionType: string;
+    sourceOrder: number;
+    sourceLocation?: string;
+  }>;
+  deterministicRecords: Array<{
+    primaryName: string;
+    recordType: string;
+    actionType: string;
+    sourceOrder: number;
+    sourceLocation?: string;
+  }>;
+}
+
+export class ApiRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly body?: unknown
+  ) {
+    super(message);
+    this.name = "ApiRequestError";
+  }
 }
 
 async function getJson<T>(path: string): Promise<T> {
@@ -145,6 +190,52 @@ export async function createExportBatch(candidateId: string, reexportReason?: st
   }
 
   return (await response.json()) as CreateExportBatchResponse;
+}
+
+export async function markExtractionComplete(candidateId: string, comment?: string) {
+  const response = await fetch(`/api/correction/candidates/${candidateId}/mark-complete`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      actor: "evidence-workbench",
+      ...(comment?.trim() ? { comment: comment.trim() } : {})
+    })
+  });
+
+  if (!response.ok) {
+    const body = (await response.json().catch(() => undefined)) as { message?: string } | undefined;
+    throw new Error(body?.message ?? `Request failed: ${response.status}`);
+  }
+
+  return (await response.json()) as MarkExtractionCompleteResponse;
+}
+
+export async function saveRecordReview(input: {
+  candidateId: string;
+  recordId: string;
+  decision: SanctionsDeltaRecordReview["decision"];
+  comment?: string;
+}) {
+  const response = await fetch(`/api/correction/candidates/${input.candidateId}/records/${input.recordId}/review`, {
+    method: "PUT",
+    headers: {
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      actor: "evidence-workbench",
+      decision: input.decision,
+      ...(input.comment?.trim() ? { comment: input.comment.trim() } : {})
+    })
+  });
+
+  if (!response.ok) {
+    const body = (await response.json().catch(() => undefined)) as { message?: string } | undefined;
+    throw new Error(body?.message ?? `Request failed: ${response.status}`);
+  }
+
+  return (await response.json()) as SaveRecordReviewResponse;
 }
 
 export async function runRssMonitor(input: { watchQueryId: string; feedUrl?: string; publicationYear?: number }) {
@@ -229,7 +320,7 @@ export async function aiExtractSourceContent(candidateId: string) {
 
   if (!response.ok) {
     const body = (await response.json().catch(() => undefined)) as { message?: string } | undefined;
-    throw new Error(body?.message ?? `Request failed: ${response.status}`);
+    throw new ApiRequestError(body?.message ?? `Request failed: ${response.status}`, response.status, body);
   }
 
   return (await response.json()) as unknown;

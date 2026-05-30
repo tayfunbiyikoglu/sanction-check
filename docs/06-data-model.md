@@ -2,9 +2,9 @@
 
 ## Implementation Note
 
-The API currently uses in-memory stores for candidates, monitor runs, retrieval state, extraction results, corrections, and exports. The next implementation slice should wire these tables to PostgreSQL without changing the domain language or dashboard workflow. Once the repository boundary lands, PostgreSQL should be the default API persistence mode for local runtime; in-memory repositories should remain only for focused tests or explicit fallback.
+The API uses PostgreSQL for runtime persistence. In-memory stores remain only for focused tests or explicit test fallback.
 
-PostgreSQL should store metadata, state, audit events, and immutable references. Official Source Content bytes and raw search/RSS responses stay outside relational tables in filesystem or object storage, with PostgreSQL retaining hashes, references, source URI, content type, language, and retrieval timestamps.
+PostgreSQL stores metadata, state, audit events, and immutable references. Official Source Content bytes and raw search/RSS responses stay outside relational tables. Source Content can be stored in local filesystem storage or Azure Blob Storage, with PostgreSQL retaining hashes, references, source URI, content type, language, and retrieval timestamps.
 
 Migrations and baseline seed data should be explicit commands. API startup should validate connectivity and required baseline configuration, but should not silently create, reseed, or overwrite operational records.
 

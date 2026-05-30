@@ -21,6 +21,12 @@ describe("persistence configuration", () => {
     expect(resolveRuntimePersistenceConfig({ NODE_ENV: "test" })).toEqual({ mode: "memory" });
   });
 
+  it("rejects memory persistence outside tests", () => {
+    expect(() => resolveRuntimePersistenceConfig({ PERSISTENCE_MODE: "memory" })).toThrow(
+      "PERSISTENCE_MODE=memory is only supported for tests"
+    );
+  });
+
   it("fails clearly when PostgreSQL is enabled without DATABASE_URL", () => {
     expect(() => resolveRuntimePersistenceConfig({ PERSISTENCE_MODE: "postgres" })).toThrow(
       PersistenceConfigurationError

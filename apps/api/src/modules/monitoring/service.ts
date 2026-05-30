@@ -1,16 +1,12 @@
 import type { CandidateLegalAct, MonitorRun, SearchResponseReference, WatchQuery } from "@sanctions/domain";
 import {
-  normalizeLegalActIdentityInput,
-  resolveLegalActIdentity
-} from "@sanctions/domain";
-import {
   candidateLegalActs,
   recordMonitorRun,
-  refreshCandidateLegalActIdentity,
   sanctionsDeltaRecords,
   upsertCandidateLegalAct,
   watchQueries
 } from "../seed-data.js";
+import { buildMonitorRun, mergeDiscoveryTrigger as mergeDiscoveryTriggerCore } from "./discovery.js";
 
 let monitorRunSequence = 1;
 
@@ -55,7 +51,14 @@ export function executeMonitorRun(input: ExecuteMonitorRunInput): ExecuteMonitor
 
   for (const trigger of input.triggers) {
     try {
-      const { candidate, created } = mergeDiscoveryTrigger(trigger, watchQuery, finishedAt);
+      const { candidate, created } = mergeDiscoveryTriggerCore({
+        existingCandidates: candidateLegalActs,
+        fallbackCandidateIdSeed: candidateLegalActs.length + 1,
+        seenAt: finishedAt,
+        trigger,
+        watchQuery
+      });
+      upsertCandidateLegalAct(candidate);
       seenCandidates.push(candidate);
 
       if (created) {
@@ -70,19 +73,18 @@ export function executeMonitorRun(input: ExecuteMonitorRunInput): ExecuteMonitor
     throw new Error("Discovery triggers must not create sanctions delta records");
   }
 
-  const monitorRun = recordMonitorRun({
-    id: createMonitorRunId(),
-    startedAt,
+  const monitorRun = recordMonitorRun(buildMonitorRun({
+    discoveryErrors: errors,
     finishedAt,
-    status: errors.length === 0 ? "SUCCESS" : seenCandidates.length > 0 ? "PARTIAL" : "FAILED",
-    source: watchQuery.source,
-    watchQueryId: watchQuery.id,
-    querySnapshot: watchQuery.queryText,
-    itemsSeen: input.itemsSeen ?? input.triggers.length,
+    monitorRunId: createMonitorRunId(),
     newCandidates,
-    ...(input.searchResponse ? { searchResponse: input.searchResponse } : {}),
-    ...(errors.length > 0 ? { errorMessage: errors.join("; ") } : {})
-  });
+    seenCandidateCount: seenCandidates.length,
+    startedAt,
+    triggerCount: input.triggers.length,
+    watchQuery,
+    ...(input.itemsSeen !== undefined ? { itemsSeen: input.itemsSeen } : {}),
+    ...(input.searchResponse ? { searchResponse: input.searchResponse } : {})
+  }));
 
   return {
     monitorRun,
@@ -97,75 +99,6 @@ function createMonitorRunId(): string {
   return `monitor-run-${timestamp}-${sequence}`;
 }
 
-export function mergeDiscoveryTrigger(
-  trigger: DiscoveryTrigger,
-  watchQuery: WatchQuery,
-  seenAt: string
-): { candidate: CandidateLegalAct; created: boolean } {
-  const normalized = normalizeLegalActIdentityInput(trigger);
-  const identity = resolveLegalActIdentity(normalized);
-  const existing = findCandidateByAnyIdentity(normalized);
-
-  if (existing) {
-    applyDiscoveryTriggerToExistingCandidate(existing, trigger, seenAt);
-    return { candidate: upsertCandidateLegalAct(existing), created: false };
-  }
-
-  const candidate: CandidateLegalAct = {
-    id: createCandidateId(identity.value),
-    ...normalized,
-    legalActIdentityKind: identity.kind,
-    legalActIdentityValue: identity.value,
-    title: trigger.title,
-    ...(trigger.publicationDate ? { publicationDate: trigger.publicationDate } : {}),
-    status: "DETECTED",
-    workingLanguage: "en",
-    ...(trigger.sourceUrl ? { sourceUrl: trigger.sourceUrl } : {}),
-    rssFeedName: trigger.rssFeedName ?? watchQuery.name,
-    detectedAt: trigger.discoveredAt ?? seenAt,
-    lastSeenAt: seenAt
-  };
-
-  return { candidate: upsertCandidateLegalAct(candidate), created: true };
-}
-
-function applyDiscoveryTriggerToExistingCandidate(
-  candidate: CandidateLegalAct,
-  trigger: DiscoveryTrigger,
-  seenAt: string
-): void {
-  const normalized = normalizeLegalActIdentityInput(trigger);
-
-  if (normalized.celexId) {
-    candidate.celexId = normalized.celexId;
-  }
-
-  if (normalized.cellarId) {
-    candidate.cellarId = normalized.cellarId;
-  }
-
-  if (normalized.officialUri) {
-    candidate.officialUri = normalized.officialUri;
-  }
-
-  candidate.title = trigger.title || candidate.title;
-
-  if (trigger.publicationDate) {
-    candidate.publicationDate = trigger.publicationDate;
-  }
-
-  if (trigger.sourceUrl) {
-    candidate.sourceUrl = trigger.sourceUrl;
-  }
-
-  if (trigger.rssFeedName) {
-    candidate.rssFeedName = trigger.rssFeedName;
-  }
-
-  candidate.lastSeenAt = seenAt;
-  refreshCandidateLegalActIdentity(candidate);
-}
-
 function findWatchQuery(watchQueryId: string): WatchQuery {
   const watchQuery = watchQueries.find((query) => query.id === watchQueryId && query.isActive);
 
@@ -174,30 +107,4 @@ function findWatchQuery(watchQueryId: string): WatchQuery {
   }
 
   return watchQuery;
-}
-
-function findCandidateByAnyIdentity(
-  identityInput: ReturnType<typeof normalizeLegalActIdentityInput>
-): CandidateLegalAct | undefined {
-  return candidateLegalActs.find((candidate) => {
-    const normalizedCandidate = normalizeLegalActIdentityInput(candidate);
-
-    return (
-      (identityInput.celexId !== undefined && normalizedCandidate.celexId === identityInput.celexId) ||
-      (identityInput.cellarId !== undefined &&
-        normalizedCandidate.cellarId === identityInput.cellarId) ||
-      (identityInput.officialUri !== undefined &&
-        normalizedCandidate.officialUri === identityInput.officialUri)
-    );
-  });
-}
-
-function createCandidateId(identityValue: string): string {
-  const slug = identityValue
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 40);
-
-  return `candidate-discovered-${slug || candidateLegalActs.length + 1}`;
 }
