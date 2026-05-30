@@ -12,7 +12,9 @@ import type {
 } from "@sanctions/domain";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  ApiRequestError,
   aiExtractSourceContent,
+  classifySourceContent,
   createExportBatch,
   createRssWatchQuery,
   fetchCandidateDetail,
@@ -27,7 +29,7 @@ import {
   runRssMonitor,
   saveRecordReview
 } from "../api/client.js";
-import type { CandidateDetailResponse, SourceContentResponse } from "../api/client.js";
+import type { AiExtractionUndercountResponse, CandidateDetailResponse, SourceContentResponse } from "../api/client.js";
 import type { AuditEvent } from "../api/client.js";
 import { SourceContentPanel } from "./SourceContentPanel.js";
 import {
@@ -60,6 +62,7 @@ export function App() {
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [exportActionError, setExportActionError] = useState<string | null>(null);
+  const [aiExtractionUndercount, setAiExtractionUndercount] = useState<AiExtractionUndercountResponse | null>(null);
   const [isCreatingExportBatch, setIsCreatingExportBatch] = useState(false);
   const [isMarkingExtractionComplete, setIsMarkingExtractionComplete] = useState(false);
   const [markCompleteComment, setMarkCompleteComment] = useState("");
@@ -260,13 +263,38 @@ export function App() {
     setLiveActionKind("ai-extract");
     setLiveActionMessage(null);
     setExportActionError(null);
+    setAiExtractionUndercount(null);
 
     try {
       await aiExtractSourceContent(selectedCandidate.id);
       await refreshSelectedCandidate(selectedCandidate.id);
       setLiveActionMessage("AI extraction completed from official Source Content.");
     } catch (cause) {
+      if (cause instanceof ApiRequestError && isAiExtractionUndercountResponse(cause.body)) {
+        setAiExtractionUndercount(cause.body);
+      }
       setExportActionError(cause instanceof Error ? cause.message : "Unable to run AI extraction");
+    } finally {
+      setLiveActionKind(null);
+    }
+  }
+
+  async function handleUseAnnexExtraction() {
+    if (!selectedCandidate) {
+      return;
+    }
+
+    setLiveActionKind("annex-extract");
+    setLiveActionMessage(null);
+    setExportActionError(null);
+
+    try {
+      await classifySourceContent(selectedCandidate.id);
+      setAiExtractionUndercount(null);
+      await refreshSelectedCandidate(selectedCandidate.id);
+      setLiveActionMessage("Deterministic Annex extraction applied.");
+    } catch (cause) {
+      setExportActionError(cause instanceof Error ? cause.message : "Unable to apply deterministic Annex extraction");
     } finally {
       setLiveActionKind(null);
     }
@@ -288,6 +316,7 @@ export function App() {
       setSourceContent(cachedSourceContent ?? null);
       setSourceError(null);
       setExportActionError(null);
+      setAiExtractionUndercount(null);
       setReexportReason("");
       setMarkCompleteComment("");
 
@@ -641,6 +670,12 @@ export function App() {
             records={selectedRecords}
             sourceError={sourceError}
           />
+          <AiExtractionUndercountPanel
+            disabled={liveActionKind !== null}
+            isApplying={liveActionKind === "annex-extract"}
+            onUseAnnexExtraction={handleUseAnnexExtraction}
+            undercount={aiExtractionUndercount}
+          />
         </section>
 
         <aside className="recordPanel" aria-label="Sanctions Delta Records and export readiness">
@@ -726,6 +761,95 @@ export function App() {
         <ExportBatchTable batches={exportBatches} downloadEvents={downloadEvents} />
       </section>
     </main>
+  );
+}
+
+type AiRecordPreview = AiExtractionUndercountResponse["aiRecords"][number];
+
+function isAiExtractionUndercountResponse(value: unknown): value is AiExtractionUndercountResponse {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const response = value as Partial<AiExtractionUndercountResponse>;
+  return (
+    response.code === "AI_EXTRACTION_UNDERCOUNT" &&
+    typeof response.aiRecordCount === "number" &&
+    typeof response.deterministicRecordCount === "number" &&
+    Array.isArray(response.aiRecords) &&
+    Array.isArray(response.deterministicRecords)
+  );
+}
+
+function AiExtractionUndercountPanel({
+  disabled,
+  isApplying,
+  onUseAnnexExtraction,
+  undercount
+}: {
+  disabled: boolean;
+  isApplying: boolean;
+  onUseAnnexExtraction: () => void;
+  undercount: AiExtractionUndercountResponse | null;
+}) {
+  if (!undercount) {
+    return null;
+  }
+
+  return (
+    <div className="aiUndercountPanel" role="status" aria-live="polite">
+      <div className="aiUndercountHeader">
+        <div>
+          <p className="eyebrow">AI Extraction Review</p>
+          <h3>AI returned fewer records than Annex parsing</h3>
+        </div>
+        <div className="aiUndercountCounts">
+          <span>
+            AI <strong>{undercount.aiRecordCount}</strong>
+          </span>
+          <span>
+            Annex <strong>{undercount.deterministicRecordCount}</strong>
+          </span>
+        </div>
+      </div>
+      <p className="aiUndercountMessage">{undercount.message}</p>
+      <div className="aiUndercountActions">
+        <button disabled={disabled} onClick={onUseAnnexExtraction}>
+          {isApplying ? <span className="spinner" aria-hidden="true" /> : null}
+          {isApplying ? "Applying Annex extraction..." : `Use Annex extraction (${undercount.deterministicRecordCount})`}
+        </button>
+      </div>
+      <div className="aiUndercountGrid">
+        <RecordPreviewList label="AI records returned" records={undercount.aiRecords} />
+        <RecordPreviewList label="Deterministic records found" records={undercount.deterministicRecords} />
+      </div>
+    </div>
+  );
+}
+
+function RecordPreviewList({ label, records }: { label: string; records: AiRecordPreview[] }) {
+  return (
+    <div className="aiRecordPreview">
+      <div className="aiRecordPreviewHeader">
+        <h4>{label}</h4>
+        <span>{records.length}</span>
+      </div>
+      {records.length > 0 ? (
+        <ol>
+          {records.map((record) => (
+            <li key={`${record.sourceOrder}-${record.primaryName}-${record.actionType}`}>
+              <strong>{record.primaryName || "Unnamed record"}</strong>
+              <span>
+                {record.recordType} · {formatDeltaAction(record.actionType)}
+              </span>
+              {record.sourceLocation ? <small>{record.sourceLocation}</small> : null}
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p className="loadState">No records returned.</p>
+      )}
+    </div>
   );
 }
 
@@ -859,8 +983,24 @@ function RecordTable({
     }
 
     const nextIndex = Math.max(0, Math.min(records.length - 1, selectedRecordIndex + direction));
-    setSelectedRecordId(records[nextIndex]?.id ?? null);
+    selectRecord(records[nextIndex]?.id ?? null, { jumpToEvidence: true });
     setExpandedEvidenceRecordId(null);
+  }
+
+  function selectRecord(recordId: string | null, options: { jumpToEvidence?: boolean } = {}) {
+    setSelectedRecordId(recordId);
+
+    if (recordId && options.jumpToEvidence) {
+      onJumpToEvidence(recordId);
+    }
+  }
+
+  function enterReviewMode() {
+    setReviewMode(true);
+
+    if (selectedRecord) {
+      onJumpToEvidence(selectedRecord.id);
+    }
   }
 
   async function markSelectedRecord(decision: ReviewDecision, advance = false) {
@@ -883,7 +1023,7 @@ function RecordTable({
       });
 
       if (advance && selectedRecordIndex < records.length - 1) {
-        setSelectedRecordId(records[selectedRecordIndex + 1]?.id ?? null);
+        selectRecord(records[selectedRecordIndex + 1]?.id ?? null, { jumpToEvidence: true });
         setExpandedEvidenceRecordId(null);
       }
     } catch (cause) {
@@ -1002,28 +1142,28 @@ function RecordTable({
           <strong>{reviewCounts.reviewed} reviewed</strong>
           <span>{reviewAvailable ? `${reviewCounts.flagged} flagged` : "Review closed after export"}</span>
         </div>
-        {reviewAvailable ? <button onClick={() => setReviewMode(true)}>Review names</button> : null}
+        {reviewAvailable ? <button onClick={enterReviewMode}>Review names</button> : null}
       </div>
       <div className="recordReview">
         <div className="recordList" aria-label="Extracted Sanctions Delta Records">
           {records.map((record) => (
-          <button
-            className={`recordListItem ${record.id === selectedRecord?.id ? "selected" : ""}`}
-            key={record.id}
-            onClick={() => setSelectedRecordId(record.id)}
-          >
-            <span className="recordOrder">{record.sourceOrder}</span>
-            <span className="recordNameBlock">
-              <strong>{record.primaryName}</strong>
-              <small>
-                {record.affectedAnnex ?? "Annex unknown"} · {record.recordType}
-              </small>
-            </span>
-            <ReviewDecisionMarker decision={reviewDecisions[record.id]} />
-            <span className={`deltaAction ${record.actionType.toLowerCase()}`}>
-              {formatDeltaAction(record.actionType)}
-            </span>
-          </button>
+            <button
+              className={`recordListItem ${record.id === selectedRecord?.id ? "selected" : ""}`}
+              key={record.id}
+              onClick={() => selectRecord(record.id, { jumpToEvidence: true })}
+            >
+              <span className="recordOrder">{record.sourceOrder}</span>
+              <span className="recordNameBlock">
+                <strong>{record.primaryName}</strong>
+                <small>
+                  {record.affectedAnnex ?? "Annex unknown"} · {record.recordType}
+                </small>
+              </span>
+              <ReviewDecisionMarker decision={reviewDecisions[record.id]} />
+              <span className={`deltaAction ${record.actionType.toLowerCase()}`}>
+                {formatDeltaAction(record.actionType)}
+              </span>
+            </button>
           ))}
         </div>
 

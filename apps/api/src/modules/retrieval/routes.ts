@@ -1,4 +1,3 @@
-import path from "node:path";
 import type { FastifyInstance } from "fastify";
 import { candidateLegalActs, recordAuditEvent } from "../seed-data.js";
 import {
@@ -6,7 +5,7 @@ import {
   RecordedCellarSourceContentAdapter
 } from "./cellar-source-adapter.js";
 import { seededOfficialSourceFixtures } from "./mock-eurlex-cellar-adapter.js";
-import { FilesystemSourceContentRepository } from "./source-content-repository.js";
+import { buildSourceContentRepository } from "./source-content-repository.js";
 import { SourceRetrievalService } from "./source-retrieval-service.js";
 import { systemClock } from "./types.js";
 
@@ -87,12 +86,6 @@ export async function registerRetrievalRoutes(server: FastifyInstance) {
       content: await sourceContentRepository.read(candidate.sourceContent.reference)
     };
   });
-}
-
-function buildSourceContentRepository() {
-  return new FilesystemSourceContentRepository(
-    process.env.SOURCE_CONTENT_STORAGE_DIR ?? path.resolve(process.cwd(), "../../storage/source-content")
-  );
 }
 
 function buildCellarSourceContentAdapter(input: {

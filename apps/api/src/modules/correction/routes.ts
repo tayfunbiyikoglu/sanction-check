@@ -1,4 +1,3 @@
-import path from "node:path";
 import type { RecordReviewDecision, SanctionsDeltaRecordReview } from "@sanctions/domain";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import {
@@ -13,7 +12,8 @@ import {
   upsertExtractionResult
 } from "../seed-data.js";
 import { evaluateCompleteExtractionGate } from "./complete-extraction-gate.js";
-import { FilesystemSourceContentRepository } from "../retrieval/source-content-repository.js";
+import { buildSourceContentRepository } from "../retrieval/source-content-repository.js";
+import type { SourceContentRepository } from "../retrieval/types.js";
 import {
   addMissedRecordFromSourceContext,
   applySourceBackedFieldCorrection,
@@ -375,7 +375,7 @@ function recordMarkCompleteAuditEvent(
 }
 
 async function readSourceContent(
-  sourceContentRepository: FilesystemSourceContentRepository,
+  sourceContentRepository: SourceContentRepository,
   candidate: (typeof candidateLegalActs)[number]
 ) {
   if (!candidate.sourceContent) {
@@ -419,10 +419,4 @@ function sendCorrectionError(reply: FastifyReply, cause: unknown) {
   }
 
   throw cause;
-}
-
-function buildSourceContentRepository() {
-  return new FilesystemSourceContentRepository(
-    process.env.SOURCE_CONTENT_STORAGE_DIR ?? path.resolve(process.cwd(), "../../storage/source-content")
-  );
 }

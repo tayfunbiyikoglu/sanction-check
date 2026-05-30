@@ -105,6 +105,38 @@ export interface RetrieveSourceContentResponse {
   sourceContent?: CandidateLegalAct["sourceContent"];
 }
 
+export interface AiExtractionUndercountResponse {
+  message: string;
+  code: "AI_EXTRACTION_UNDERCOUNT";
+  aiRecordCount: number;
+  deterministicRecordCount: number;
+  aiRecords: Array<{
+    primaryName: string;
+    recordType: string;
+    actionType: string;
+    sourceOrder: number;
+    sourceLocation?: string;
+  }>;
+  deterministicRecords: Array<{
+    primaryName: string;
+    recordType: string;
+    actionType: string;
+    sourceOrder: number;
+    sourceLocation?: string;
+  }>;
+}
+
+export class ApiRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly body?: unknown
+  ) {
+    super(message);
+    this.name = "ApiRequestError";
+  }
+}
+
 async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(path);
 
@@ -288,7 +320,7 @@ export async function aiExtractSourceContent(candidateId: string) {
 
   if (!response.ok) {
     const body = (await response.json().catch(() => undefined)) as { message?: string } | undefined;
-    throw new Error(body?.message ?? `Request failed: ${response.status}`);
+    throw new ApiRequestError(body?.message ?? `Request failed: ${response.status}`, response.status, body);
   }
 
   return (await response.json()) as unknown;

@@ -2,15 +2,15 @@
 
 ## Current Status
 
-The project now has a runnable Node/TypeScript API and React Evidence Workbench dashboard. The live RSS path, public CELLAR retrieval path, XHTML Annex parser, classification flow, correction flow, CSV export flow, and focused tests are implemented for the local prototype.
+The project now has a runnable Node/TypeScript API and React Evidence Workbench dashboard. The live RSS path, public CELLAR retrieval path, XHTML Annex parser, classification flow, correction flow, CSV export flow, PostgreSQL runtime persistence, and focused tests are implemented for the local prototype.
 
 Proven live case: CELEX `32026R1055` can be discovered from the saved EUR-Lex RSS feed, retrieved from public CELLAR as official English XHTML Source Content, classified as a complete extraction, and parsed into 23 Sanctions Delta Records: 16 persons and 7 entities.
 
-The main remaining prototype gap is durability. State is still in-memory, so API restarts lose candidates, monitor run history, retrieval state, extraction results, corrections, and export records. PostgreSQL persistence is the recommended next implementation slice.
+The main remaining deployment-readiness gap is hardening operational runtime concerns: environment validation, production job execution, authentication, backup/restore practice, and smoke tests against the deployment storage adapters.
 
-## Recommended Next Slice: PostgreSQL Persistence
+## Completed Slice: PostgreSQL Persistence
 
-Implement persistence in small vertical steps:
+The PostgreSQL persistence slice has landed for runtime state:
 
 1. Add PostgreSQL connection/config, migration runner, and repository interfaces that match the current in-memory store contracts. PostgreSQL becomes the default API persistence mode for local runtime; in-memory repositories remain available only for focused tests or explicit fallback.
    - Migrations and baseline seed data should run through explicit commands, not hidden startup side effects.
@@ -29,6 +29,14 @@ Implement persistence in small vertical steps:
    - Extraction results should be append-mostly; reprocessing creates a new extraction result rather than mutating previous parser outputs.
 4. Persist corrections, export batches, export batch records, export downloads, and audit events.
 5. Update API routes/tests so a candidate discovered, retrieved, classified, and exported before restart is still visible after restart.
+
+## Recommended Next Slice: Deployment Hardening
+
+1. Validate required runtime environment at startup, including PostgreSQL, Source Content storage mode, CELLAR live retrieval config, and AI provider config when AI extraction is enabled.
+2. Add a deployment smoke path that verifies database connectivity, baseline seed configuration, Source Content storage read/write, and the configured retrieval mode without printing Source Content bytes or secrets.
+3. Replace local trusted actor defaults with the chosen workplace authentication and actor propagation model.
+4. Decide whether the hourly RSS worker remains in-process for deployment or moves behind a dedicated scheduler/worker runtime.
+5. Document backup/restore expectations for PostgreSQL and Azure Blob Storage Source Content.
 
 ## Epic 1: Project Skeleton
 

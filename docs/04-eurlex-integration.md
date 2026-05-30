@@ -69,10 +69,13 @@ Live integration configuration keeps search and retrieval separate:
 
 - `EURLEX_SEARCH_MODE=mock|live` controls whether monitor runs use recorded/mock EUR-Lex search responses or the live EUR-Lex Web Service.
 - `CELLAR_RETRIEVAL_MODE=mock|live` controls whether Source Content retrieval uses recorded/mock CELLAR content or live CELLAR retrieval.
+- `SOURCE_CONTENT_STORAGE_MODE=local|azure` controls whether retrieved Source Content bytes are stored on the local filesystem or in Azure Blob Storage.
 
 This allows live search to be tested with mock Source Content retrieval, and known CELEX/CELLAR retrieval to be tested without running live search.
 
 If live mode is selected but required endpoint or credential configuration is missing, the affected operation fails with a clear operational error and audit/alert visibility. The application should not silently fall back to mock mode.
+
+For local storage, configure `SOURCE_CONTENT_ROOT` or the backwards-compatible `SOURCE_CONTENT_STORAGE_DIR`. For Azure storage, configure `AZURE_STORAGE_CONNECTION_STRING` and `AZURE_STORAGE_CONTAINER_NAME`; the container should already exist. Both adapters keep the same immutable Source Content reference format, for example `sha256/ab/<hash>.html`, so PostgreSQL metadata does not need to change when moving from local storage to Azure Blob Storage.
 
 ## RSS Feed Integration
 
@@ -110,7 +113,7 @@ The local Evidence Workbench can exercise the live path manually:
 4. Classify/extract the Source Content.
 5. Review the extracted Sanctions Delta Records and export when the extraction is complete.
 
-This flow is currently backed by in-memory API state. If the API restarts, rerun RSS, retrieval, and classification to repopulate the dashboard until PostgreSQL persistence is wired.
+This flow is backed by PostgreSQL runtime state. Source Content bytes are stored outside PostgreSQL through the configured Source Content storage adapter, with immutable references retained on Candidate Legal Acts and extraction results.
 
 ## Live Smoke Tests
 

@@ -503,8 +503,9 @@ async function insertExtractionResult(
   await client.query(
     `insert into extraction_result (
        id, candidate_id, parser_version, classification, confidence, annex_found,
-       annex_heading, is_complete, evidence_text, source_content_ref, source_content_hash, created_at
-     ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+       annex_heading, is_complete, evidence_text, source_content_ref, source_content_hash, created_at,
+       ai_call_metadata
+     ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
     [
       extractionResult.id,
       extractionResult.candidateId,
@@ -517,7 +518,8 @@ async function insertExtractionResult(
       extractionResult.evidenceText ?? null,
       candidate.sourceContent?.reference ?? null,
       candidate.sourceContent?.contentHash ?? null,
-      extractionResult.createdAt
+      extractionResult.createdAt,
+      extractionResult.aiCall ? JSON.stringify(extractionResult.aiCall) : null
     ]
   );
 }
@@ -694,6 +696,7 @@ interface ExtractionResultRow {
   annex_heading: string | null;
   is_complete: boolean;
   evidence_text: string | null;
+  ai_call_metadata: ExtractionResult["aiCall"] | null;
   created_at: Date;
 }
 
@@ -836,6 +839,7 @@ function mapExtractionResult(row: ExtractionResultRow): ExtractionResult {
     ...(row.annex_heading ? { annexHeading: row.annex_heading } : {}),
     isComplete: row.is_complete,
     ...(row.evidence_text ? { evidenceText: row.evidence_text } : {}),
+    ...(row.ai_call_metadata ? { aiCall: row.ai_call_metadata } : {}),
     createdAt: row.created_at.toISOString()
   };
 }

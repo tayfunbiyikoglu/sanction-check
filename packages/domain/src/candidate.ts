@@ -143,7 +143,27 @@ export interface ExtractionResult {
   annexHeading?: string;
   isComplete: boolean;
   evidenceText?: string;
+  aiCall?: AiCallMetadata;
   createdAt: string;
+}
+
+export interface AiCallMetadata {
+  provider: "openai" | "azure-openai";
+  model: string;
+  status: string;
+  durationMs: number;
+  inputTokens?: number;
+  cachedInputTokens?: number;
+  outputTokens?: number;
+  reasoningTokens?: number;
+  totalTokens?: number;
+  estimatedCostUsd?: number;
+  pricing?: {
+    inputUsdPerMillionTokens: number;
+    cachedInputUsdPerMillionTokens?: number;
+    outputUsdPerMillionTokens: number;
+    source: string;
+  };
 }
 
 export interface ConfiguredBaseAct {

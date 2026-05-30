@@ -8,7 +8,7 @@ import type {
 
 export type QueueFilter = "ALL" | CandidateStatus;
 export type SourceView = "official" | "metadata";
-export type LiveActionKind = "rss" | "retrieve" | "ai-extract" | null;
+export type LiveActionKind = "rss" | "retrieve" | "ai-extract" | "annex-extract" | null;
 export type Theme = "light" | "dark";
 export type ReviewDecision = "good" | "flagged" | "skipped";
 

@@ -184,6 +184,38 @@ function SourceMetadataView({
           <dt>Extraction result</dt>
           <dd>{extraction ? `${formatClassification(extraction.classification)} · ${Math.round(extraction.confidence * 100)}%` : "Pending"}</dd>
         </div>
+        <div>
+          <dt>AI provider</dt>
+          <dd>{extraction?.aiCall ? formatAiProvider(extraction.aiCall.provider) : "Not AI-assisted"}</dd>
+        </div>
+        <div>
+          <dt>AI model</dt>
+          <dd>{extraction?.aiCall?.model ?? "Not available"}</dd>
+        </div>
+        <div>
+          <dt>AI input tokens</dt>
+          <dd>{formatTokenCount(extraction?.aiCall?.inputTokens, extraction?.aiCall?.cachedInputTokens)}</dd>
+        </div>
+        <div>
+          <dt>AI output tokens</dt>
+          <dd>{formatOutputTokenCount(extraction?.aiCall?.outputTokens, extraction?.aiCall?.reasoningTokens)}</dd>
+        </div>
+        <div>
+          <dt>AI total tokens</dt>
+          <dd>{formatNumber(extraction?.aiCall?.totalTokens)}</dd>
+        </div>
+        <div>
+          <dt>AI estimated cost</dt>
+          <dd>{formatCost(extraction?.aiCall?.estimatedCostUsd)}</dd>
+        </div>
+        <div>
+          <dt>AI response</dt>
+          <dd>{extraction?.aiCall ? `${formatClassification(extraction.aiCall.status)} · ${formatDuration(extraction.aiCall.durationMs)}` : "Not available"}</dd>
+        </div>
+        <div>
+          <dt>AI pricing basis</dt>
+          <dd>{formatPricingBasis(extraction?.aiCall?.pricing)}</dd>
+        </div>
       </dl>
     </div>
   );
@@ -339,4 +371,51 @@ function formatClassification(value: string) {
     .split("_")
     .map((part) => part[0]?.toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function formatAiProvider(value: string) {
+  return value === "azure-openai" ? "Azure OpenAI" : "OpenAI";
+}
+
+function formatNumber(value: number | undefined) {
+  return value === undefined ? "Not available" : value.toLocaleString();
+}
+
+function formatTokenCount(inputTokens: number | undefined, cachedInputTokens: number | undefined) {
+  if (inputTokens === undefined) {
+    return "Not available";
+  }
+
+  return cachedInputTokens && cachedInputTokens > 0
+    ? `${inputTokens.toLocaleString()} (${cachedInputTokens.toLocaleString()} cached)`
+    : inputTokens.toLocaleString();
+}
+
+function formatOutputTokenCount(outputTokens: number | undefined, reasoningTokens: number | undefined) {
+  if (outputTokens === undefined) {
+    return "Not available";
+  }
+
+  return reasoningTokens && reasoningTokens > 0
+    ? `${outputTokens.toLocaleString()} (${reasoningTokens.toLocaleString()} reasoning)`
+    : outputTokens.toLocaleString();
+}
+
+function formatCost(value: number | undefined) {
+  return value === undefined ? "Not available" : `$${value.toFixed(6)}`;
+}
+
+function formatDuration(value: number) {
+  return value >= 1000 ? `${(value / 1000).toFixed(1)}s` : `${value}ms`;
+}
+
+function formatPricingBasis(pricing: NonNullable<NonNullable<ExtractionResult["aiCall"]>["pricing"]> | undefined) {
+  if (!pricing) {
+    return "No local pricing estimate for this model";
+  }
+
+  const cached = pricing.cachedInputUsdPerMillionTokens === undefined
+    ? ""
+    : `, cached $${pricing.cachedInputUsdPerMillionTokens}/M`;
+  return `Input $${pricing.inputUsdPerMillionTokens}/M${cached}, output $${pricing.outputUsdPerMillionTokens}/M`;
 }

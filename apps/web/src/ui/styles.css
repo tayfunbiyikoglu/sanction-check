@@ -827,6 +827,147 @@ dd {
   white-space: nowrap;
 }
 
+.aiUndercountPanel {
+  display: grid;
+  gap: 10px;
+  margin: 0 12px 12px;
+  padding: 12px;
+  border: 1px solid var(--danger-bg);
+  border-left: 4px solid var(--danger-strong);
+  border-radius: 6px;
+  background: var(--surface-muted);
+}
+
+.aiUndercountHeader,
+.aiRecordPreviewHeader {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.aiUndercountHeader h3 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 0.9rem;
+  line-height: 1.25;
+}
+
+.aiUndercountCounts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.aiUndercountCounts span,
+.aiRecordPreviewHeader span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 999px;
+  background: var(--badge-bg);
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+  padding: 0.22rem 0.48rem;
+  white-space: nowrap;
+}
+
+.aiUndercountCounts strong {
+  color: var(--text-strong);
+}
+
+.aiUndercountMessage {
+  color: var(--danger-strong);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.aiUndercountActions {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.aiUndercountActions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border-color: var(--danger-strong);
+  background: var(--danger-strong);
+  color: white;
+}
+
+.aiUndercountActions button:hover {
+  border-color: var(--danger-strong);
+  background: var(--danger-strong);
+}
+
+.aiUndercountActions button:disabled {
+  border-color: var(--border-strong);
+  background: var(--surface-soft);
+  color: var(--text-disabled);
+}
+
+.aiUndercountGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.aiRecordPreview {
+  min-width: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.aiRecordPreviewHeader {
+  align-items: center;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.aiRecordPreview h4 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 0.78rem;
+}
+
+.aiRecordPreview ol {
+  display: grid;
+  gap: 0;
+  max-height: 260px;
+  overflow: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.aiRecordPreview li {
+  display: grid;
+  gap: 3px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.aiRecordPreview li:last-child {
+  border-bottom: 0;
+}
+
+.aiRecordPreview strong {
+  color: var(--text-strong);
+  font-size: 0.78rem;
+  line-height: 1.3;
+}
+
+.aiRecordPreview span,
+.aiRecordPreview small {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  line-height: 1.35;
+}
+
 .evidence {
   position: relative;
   max-height: 543px;
@@ -1757,6 +1898,7 @@ td small {
   }
 
   .supportGrid,
+  .aiUndercountGrid,
   .metadataGrid,
   .recordReview,
   .recordFacts {
