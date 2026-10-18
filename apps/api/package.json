@@ -19,7 +19,7 @@
     "@azure/storage-blob": "^12.31.0",
     "@fastify/cors": "^10.0.0",
     "@sanctions/domain": "file:../../packages/domain",
-    "fastify": "^5.1.0",
+    "fastify": "^5.12.5",
     "pg": "^8.13.0",
     "zod": "^3.24.0"
   },
@@ -28,6 +28,6 @@
     "@types/pg": "^8.11.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
-    "vitest": "^2.1.0"
+    "vitest": "^5.0.5"
   }
 }
